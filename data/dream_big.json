@@ -1,0 +1,7 @@
+{
+  "openEnded": [
+    { "id": "dream-1", "prompt": "If you could change one thing about your school in the next year, what would it be and why?" },
+    { "id": "dream-2", "prompt": "Describe a big idea that would help students feel safer, more supported, or more engaged." },
+    { "id": "dream-3", "prompt": "What is one bold improvement that would make school better for everyone?" }
+  ]
+}

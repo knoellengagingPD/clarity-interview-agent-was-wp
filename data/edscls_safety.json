@@ -1,0 +1,13 @@
+{
+  "scale": { "min": 1, "max": 5, "labels": {
+    "1": "Strongly Disagree", "2": "Disagree", "3": "Neutral", "4": "Agree", "5": "Strongly Agree"
+  }},
+  "roles": ["student","parent","staff","administrator"],
+  "items": [
+    { "id": "safety-phys-1", "text": "I feel physically safe at school." },
+    { "id": "safety-emo-1",  "text": "I feel emotionally safe expressing my thoughts at school." },
+    { "id": "safety-bully-1","text": "Bullying is handled effectively at this school." },
+    { "id": "safety-rules-1","text": "School rules are enforced fairly." },
+    { "id": "safety-respect-1","text": "Adults at school treat students with respect." }
+  ]
+}
