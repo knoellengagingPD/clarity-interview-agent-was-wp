@@ -6,6 +6,17 @@ import path from 'path';
 import admin from 'firebase-admin';
 
 const app = express();
+
+function requireAccessKey(req, res, next) {
+  const expected = process.env.CLARITY_ACCESS_KEY;
+  if (!expected) return res.status(500).json({ error: "Missing CLARITY_ACCESS_KEY on server" });
+
+  const got = req.header("x-clarity-key");
+  if (!got || got !== expected) return res.status(401).json({ error: "Unauthorized" });
+
+  next();
+}
+
 app.use(express.json());
 app.use(express.static('public'));
 
@@ -68,7 +79,7 @@ RULES:
 }
 
 /** Realtime session token for browser WebRTC */
-app.get('/session', async (req, res) => {
+app.get('/session', requireAccessKey, async (req, res) => {
   try {
     const model = 'gpt-4o-realtime-preview';
     const resp = await fetch('https://api.openai.com/v1/realtime/sessions', {
@@ -100,7 +111,7 @@ app.get('/session', async (req, res) => {
 });
 
 /** Firestore logging for Likert + Dream Big */
-app.post('/log_response', async (req, res) => {
+app.post('/log_response', requireAccessKey, async (req, res) => {
   try {
     if (!db) return res.status(500).json({ error: 'Firestore not initialized' });
     const { section, question_id, role, school_id, rating, followup_text, text } = req.body || {};
