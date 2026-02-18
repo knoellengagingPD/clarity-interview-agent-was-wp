@@ -22,11 +22,30 @@ app.use(express.static('public'));
 
 if (!admin.apps.length) {
   try {
-    admin.initializeApp({ credential: admin.credential.applicationDefault() });
-    console.log('Firebase Admin initialized.');
-  } catch (e) { console.warn('Firebase Admin not initialized:', e.message); }
+    if (!admin.apps.length) {
+  try {
+    const projectId = process.env.FIREBASE_PROJECT_ID;
+
+    const sa = process.env.FIREBASE_SERVICE_ACCOUNT_JSON
+      ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON)
+      : null;
+
+    if (!projectId || !sa) {
+      throw new Error('Missing FIREBASE_PROJECT_ID or FIREBASE_SERVICE_ACCOUNT_JSON');
+    }
+
+    admin.initializeApp({
+      credential: admin.credential.cert(sa),
+      projectId,
+    });
+
+    console.log('Firebase Admin initialized for project:', projectId);
+  } catch (e) {
+    console.warn('Firebase Admin not initialized:', e.message);
+  }
 }
 const db = admin.apps.length ? admin.firestore() : null;
+
 
 // --- Load data files ---
 const DATA_DIR = path.join(process.cwd(), 'data');
