@@ -33,7 +33,14 @@ const log = {
 let db = null;
 try {
   const projectId = process.env.FIREBASE_PROJECT_ID;
-  const sa = process.env.FIREBASE_SERVICE_ACCOUNT_JSON
+  let sa = null;
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+    sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON.trim());
+  } else {
+    const localPath = path.join(process.cwd(), "firebase-service-account.json");
+    if (fs.existsSync(localPath)) { sa = JSON.parse(fs.readFileSync(localPath, "utf8")); }
+  }
+  const placeholder = "unused"
     ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON)
     : null;
 
