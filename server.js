@@ -247,16 +247,9 @@ app.use((req, res, next) => {
 
 // Health check (no auth — required for uptime monitors & enterprise buyers)
 app.get('/health', (req, res) => {
-  const hasProjectId = !!process.env.FIREBASE_PROJECT_ID;
-  const hasServiceAccount = !!process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
   res.json({
     status: 'ok',
     firebase: db ? 'connected' : 'disabled',
-    debug: {
-      hasProjectId,
-      hasServiceAccount,
-      serviceAccountLength: process.env.FIREBASE_SERVICE_ACCOUNT_JSON?.length || 0,
-    },
     ts: new Date().toISOString(),
   });
 });
