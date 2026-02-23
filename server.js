@@ -210,6 +210,26 @@ async function fetchWithTimeout(url, options, timeoutMs = 10_000) {
 // ─── Express App Setup ────────────────────────────────────────────────────────
 const app = express();
 
+// CORS
+app.use((req, res, next) => {
+  const allowed = [
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'http://localhost:3002',
+    'http://localhost:3003',
+    'https://clarity-voice-ui-workplace.vercel.app',
+    'https://clarity-interview-agent-was-wp.vercel.app',
+  ];
+  const origin = req.headers.origin;
+  if (origin && allowed.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-clarity-key');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
 // Security headers (no helmet dependency needed)
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
