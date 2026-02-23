@@ -33,16 +33,18 @@ const log = {
 let db = null;
 try {
   const projectId = process.env.FIREBASE_PROJECT_ID;
+
+  // Try env variable first, fall back to local file for Vercel compatibility
   let sa = null;
   if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
     sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON.trim());
   } else {
-    const localPath = path.join(process.cwd(), "firebase-service-account.json");
-    if (fs.existsSync(localPath)) { sa = JSON.parse(fs.readFileSync(localPath, "utf8")); }
+    const localPath = path.join(process.cwd(), 'firebase-service-account.json');
+    if (fs.existsSync(localPath)) {
+      sa = JSON.parse(fs.readFileSync(localPath, 'utf8'));
+      log.info('Loaded Firebase credentials from local file');
+    }
   }
-  const placeholder = "unused"
-    ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON)
-    : null;
 
   if (!projectId || !sa) {
     throw new Error('Missing FIREBASE_PROJECT_ID or FIREBASE_SERVICE_ACCOUNT_JSON');
@@ -245,9 +247,16 @@ app.use((req, res, next) => {
 
 // Health check (no auth — required for uptime monitors & enterprise buyers)
 app.get('/health', (req, res) => {
+  const hasProjectId = !!process.env.FIREBASE_PROJECT_ID;
+  const hasServiceAccount = !!process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
   res.json({
     status: 'ok',
     firebase: db ? 'connected' : 'disabled',
+    debug: {
+      hasProjectId,
+      hasServiceAccount,
+      serviceAccountLength: process.env.FIREBASE_SERVICE_ACCOUNT_JSON?.length || 0,
+    },
     ts: new Date().toISOString(),
   });
 });
