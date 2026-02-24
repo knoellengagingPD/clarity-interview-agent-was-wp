@@ -147,8 +147,8 @@ setInterval(() => {
 }, 5 * 60_000);
 
 // ─── Input Validators ─────────────────────────────────────────────────────────
-const VALID_SECTIONS = new Set(['edscls_safety', 'dream_big']);
-const VALID_ROLES    = new Set(['student', 'parent', 'staff', 'administrator', 'unknown']);
+const VALID_SECTIONS = new Set(['edscls_safety', 'dream_big', 'superintendent_interview']);
+const VALID_ROLES    = new Set(['student', 'parent', 'staff', 'administrator', 'superintendent', 'unknown']);
 
 function validateLogPayload(body) {
   const { section, question_id, role, school_id, rating, followup_text, text } = body || {};
@@ -352,6 +352,9 @@ app.post(
       doc.followup_text = followup_text || '';
     } else if (section === 'dream_big') {
       doc.text = text || '';
+    } else if (section === 'superintendent_interview') {
+      doc.followup_text = followup_text || '';
+      if (rating !== undefined) doc.rating = rating;
     }
 
     try {
