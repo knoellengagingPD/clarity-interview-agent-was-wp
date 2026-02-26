@@ -38,6 +38,10 @@ try {
   let sa = null;
   if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
     sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON.trim());
+    // Fix escaped newlines in private key (common Vercel paste issue)
+    if (sa.private_key) {
+      sa.private_key = sa.private_key.replace(/\\n/g, '\n');
+    }
   } else {
     const localPath = path.join(process.cwd(), 'firebase-service-account.json');
     if (fs.existsSync(localPath)) {
