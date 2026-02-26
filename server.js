@@ -34,14 +34,24 @@ let db = null;
 try {
   const projectId = process.env.FIREBASE_PROJECT_ID;
 
-  // Try env variable first, fall back to local file for Vercel compatibility
+  // Try individual env vars first (most reliable for Vercel)
   let sa = null;
-  if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+  if (process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
+    sa = {
+      type: 'service_account',
+      project_id: process.env.FIREBASE_PROJECT_ID,
+      private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID || '',
+      private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+      client_email: process.env.FIREBASE_CLIENT_EMAIL,
+      token_uri: 'https://oauth2.googleapis.com/token',
+    };
+    log.info('Loaded Firebase credentials from individual env vars');
+  } else if (process.env.FIREBASE_SERVICE_ACCOUNT_B64) {
+    const decoded = Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_B64, 'base64').toString('utf8');
+    sa = JSON.parse(decoded);
+  } else if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
     sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON.trim());
-    // Fix escaped newlines in private key (common Vercel paste issue)
-    if (sa.private_key) {
-      sa.private_key = sa.private_key.replace(/\\n/g, '\n');
-    }
+    if (sa.private_key) sa.private_key = sa.private_key.replace(/\\n/g, '\n');
   } else {
     const localPath = path.join(process.cwd(), 'firebase-service-account.json');
     if (fs.existsSync(localPath)) {
