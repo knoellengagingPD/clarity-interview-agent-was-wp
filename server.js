@@ -382,6 +382,35 @@ app.post(
   }
 );
 
+
+// ─── Admin: Fetch Sessions ────────────────────────────────────────────────────
+app.get('/admin/sessions', requireKey, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Firestore not available' });
+  try {
+    const { section, start, end } = req.query;
+    let query = db.collection('responses');
+    if (section) query = query.where('section', '==', section);
+    if (start) query = query.where('ts', '>=', new Date(start).toISOString());
+    if (end) {
+      const endDate = new Date(end);
+      endDate.setDate(endDate.getDate() + 1);
+      query = query.where('ts', '<=', endDate.toISOString());
+    }
+    const snapshot = await query.get();
+    const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+    const sessionMap = {};
+    for (const doc of docs) {
+      const sid = doc.session_id || 'unknown';
+      if (!sessionMap[sid]) sessionMap[sid] = { session_id: sid, turns: [] };
+      sessionMap[sid].turns.push({ question_id: doc.question_id, followup_text: doc.followup_text || doc.text || '', ts: doc.ts });
+    }
+    const sessions = Object.values(sessionMap);
+    return res.json({ sessions, total: sessions.length });
+  } catch (e) {
+    return res.status(500).json({ error: 'Failed to fetch sessions' });
+  }
+});
+
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({ error: 'Not found' });
