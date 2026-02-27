@@ -351,9 +351,10 @@ app.post(
       return res.status(503).json({ error: 'Firestore not available' });
     }
 
-    const { section, question_id, role, school_id, rating, followup_text, text } = req.body;
+    const { session_id, section, question_id, role, school_id, rating, followup_text, text } = req.body;
 
     const doc = {
+      session_id: session_id || 'unknown',
       section,
       question_id,
       role: role || 'unknown',
