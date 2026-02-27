@@ -33,9 +33,32 @@ const log = {
 let db = null;
 try {
   const projectId = process.env.FIREBASE_PROJECT_ID;
-  const sa = process.env.FIREBASE_SERVICE_ACCOUNT_JSON
-    ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON)
-    : null;
+
+  // Try individual env vars first (most reliable for Vercel)
+  let sa = null;
+  if (process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
+    sa = {
+      type: 'service_account',
+      project_id: process.env.FIREBASE_PROJECT_ID,
+      private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID || '',
+      private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+      client_email: process.env.FIREBASE_CLIENT_EMAIL,
+      token_uri: 'https://oauth2.googleapis.com/token',
+    };
+    log.info('Loaded Firebase credentials from individual env vars');
+  } else if (process.env.FIREBASE_SERVICE_ACCOUNT_B64) {
+    const decoded = Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_B64, 'base64').toString('utf8');
+    sa = JSON.parse(decoded);
+  } else if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+    sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON.trim());
+    if (sa.private_key) sa.private_key = sa.private_key.replace(/\\n/g, '\n');
+  } else {
+    const localPath = path.join(process.cwd(), 'firebase-service-account.json');
+    if (fs.existsSync(localPath)) {
+      sa = JSON.parse(fs.readFileSync(localPath, 'utf8'));
+      log.info('Loaded Firebase credentials from local file');
+    }
+  }
 
   if (!projectId || !sa) {
     throw new Error('Missing FIREBASE_PROJECT_ID or FIREBASE_SERVICE_ACCOUNT_JSON');
@@ -138,8 +161,8 @@ setInterval(() => {
 }, 5 * 60_000);
 
 // ─── Input Validators ─────────────────────────────────────────────────────────
-const VALID_SECTIONS = new Set(['edscls_safety', 'dream_big']);
-const VALID_ROLES    = new Set(['student', 'parent', 'staff', 'administrator', 'unknown']);
+const VALID_SECTIONS = new Set(['edscls_safety', 'dream_big', 'superintendent_interview']);
+const VALID_ROLES    = new Set(['student', 'parent', 'staff', 'administrator', 'superintendent', 'unknown']);
 
 function validateLogPayload(body) {
   const { section, question_id, role, school_id, rating, followup_text, text } = body || {};
@@ -200,6 +223,26 @@ async function fetchWithTimeout(url, options, timeoutMs = 10_000) {
 
 // ─── Express App Setup ────────────────────────────────────────────────────────
 const app = express();
+
+// CORS
+app.use((req, res, next) => {
+  const allowed = [
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'http://localhost:3002',
+    'http://localhost:3003',
+    'https://clarity-voice-ui-workplace.vercel.app',
+    'https://clarity-interview-agent-was-wp.vercel.app',
+  ];
+  const origin = req.headers.origin;
+  if (origin && allowed.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-clarity-key');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
 
 // Security headers (no helmet dependency needed)
 app.use((req, res, next) => {
@@ -323,6 +366,9 @@ app.post(
       doc.followup_text = followup_text || '';
     } else if (section === 'dream_big') {
       doc.text = text || '';
+    } else if (section === 'superintendent_interview') {
+      doc.followup_text = followup_text || '';
+      if (rating !== undefined) doc.rating = rating;
     }
 
     try {
@@ -332,6 +378,51 @@ app.post(
     } catch (e) {
       log.error('Firestore write failed', { error: e.message });
       return res.status(500).json({ error: 'Failed to save response' });
+    }
+  }
+);
+
+
+// ─── Admin: Fetch Sessions ────────────────────────────────────────────────────
+app.get(
+  '/admin/sessions',
+  requireKey,
+  async (req, res) => {
+    if (!db) return res.status(503).json({ error: 'Firestore not available' });
+
+    try {
+      const { section, start, end } = req.query;
+      let query = db.collection('responses');
+
+      if (section) query = query.where('section', '==', section);
+      if (start) query = query.where('ts', '>=', new Date(start).toISOString());
+      if (end) {
+        const endDate = new Date(end);
+        endDate.setDate(endDate.getDate() + 1);
+        query = query.where('ts', '<=', endDate.toISOString());
+      }
+
+      const snapshot = await query.get();
+      const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      // Group by session_id
+      const sessionMap = {};
+      for (const doc of docs) {
+        const sid = doc.session_id || 'unknown';
+        if (!sessionMap[sid]) sessionMap[sid] = { session_id: sid, turns: [] };
+        sessionMap[sid].turns.push({
+          question_id: doc.question_id,
+          followup_text: doc.followup_text || doc.text || '',
+          ts: doc.ts,
+        });
+      }
+
+      const sessions = Object.values(sessionMap);
+      log.info('Admin sessions fetched', { count: sessions.length });
+      return res.json({ sessions, total: sessions.length });
+    } catch (e) {
+      log.error('Admin sessions fetch failed', { error: e.message });
+      return res.status(500).json({ error: 'Failed to fetch sessions' });
     }
   }
 );
@@ -376,35 +467,3 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason) => {
   log.error('Unhandled rejection', { reason: String(reason) });
 });
-
-// ─── Admin: Fetch Sessions ────────────────────────────────────────────────────
-app.get(
-  '/admin/sessions',
-  requireKey,
-  async (req, res) => {
-    if (!db) return res.status(503).json({ error: 'Firestore not available' });
-    try {
-      const { section, start, end } = req.query;
-      let query = db.collection('responses');
-      if (section) query = query.where('section', '==', section);
-      if (start) query = query.where('ts', '>=', new Date(start).toISOString());
-      if (end) {
-        const endDate = new Date(end);
-        endDate.setDate(endDate.getDate() + 1);
-        query = query.where('ts', '<=', endDate.toISOString());
-      }
-      const snapshot = await query.get();
-      const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-      const sessionMap = {};
-      for (const doc of docs) {
-        const sid = doc.session_id || 'unknown';
-        if (!sessionMap[sid]) sessionMap[sid] = { session_id: sid, turns: [] };
-        sessionMap[sid].turns.push({ question_id: doc.question_id, followup_text: doc.followup_text || doc.text || '', ts: doc.ts });
-      }
-      const sessions = Object.values(sessionMap);
-      return res.json({ sessions, total: sessions.length });
-    } catch (e) {
-      return res.status(500).json({ error: 'Failed to fetch sessions' });
-    }
-  }
-);
