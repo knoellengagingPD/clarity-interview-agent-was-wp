@@ -384,7 +384,9 @@ app.post(
 
 
 // ─── Admin: Fetch Sessions ────────────────────────────────────────────────────
-app.get('/admin/sessions', requireKey, async (req, res) => {
+app.get('/admin/sessions', async (req, res) => {
+  const key = req.headers['x-clarity-key'];
+  if (key !== process.env.CLARITY_ACCESS_KEY) return res.status(401).json({ error: 'Unauthorized' });
   if (!db) return res.status(503).json({ error: 'Firestore not available' });
   try {
     const { section, start, end } = req.query;
