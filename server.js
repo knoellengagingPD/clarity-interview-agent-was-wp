@@ -383,6 +383,35 @@ app.post(
 );
 
 
+
+// ─── Admin: Generate Report ───────────────────────────────────────────────────
+app.post('/admin/generate-report', async (req, res) => {
+  const key = req.headers['x-clarity-key'];
+  if (key !== process.env.CLARITY_ACCESS_KEY) return res.status(401).json({ error: 'Unauthorized' });
+  
+  try {
+    const { prompt } = req.body;
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-opus-4-5',
+        max_tokens: 4000,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+    const data = await response.json();
+    return res.json(data);
+  } catch (e) {
+    log.error('Report generation failed', { error: e.message });
+    return res.status(500).json({ error: 'Report generation failed' });
+  }
+});
+
 // ─── Admin: Fetch Sessions ────────────────────────────────────────────────────
 app.get('/admin/sessions', async (req, res) => {
   const key = req.headers['x-clarity-key'];
