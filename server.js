@@ -33,16 +33,18 @@ function loadServiceAccount(prefix = '') {
   const projectId = process.env[projectIdKey];
 
   if (process.env[clientEmailKey] && process.env[privateKeyKey]) {
+    const rawKey = process.env[privateKeyKey].replace(/\\n/g, '\n').trim();
+    const cleanProjectId = projectId?.trim();
     return {
       sa: {
         type: 'service_account',
-        project_id: projectId,
+        project_id: cleanProjectId,
         private_key_id: process.env[privateKeyIdKey] || '',
-        private_key: process.env[privateKeyKey].replace(/\\n/g, '\n'),
-        client_email: process.env[clientEmailKey],
+        private_key: rawKey.endsWith('\n') ? rawKey : rawKey + '\n',
+        client_email: process.env[clientEmailKey].trim(),
         token_uri: 'https://oauth2.googleapis.com/token',
       },
-      projectId,
+      projectId: cleanProjectId,
       source: 'individual env vars',
     };
   }
