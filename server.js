@@ -317,7 +317,9 @@ app.get('/health', (req, res) => {
     status: 'ok',
     databases: {
       clarity360: db ? 'connected' : 'disabled',
+      clarity360ProjectId: db ? admin.app('[DEFAULT]').options.projectId : null,
       findMyPurpose: fmpDb ? 'connected' : 'disabled',
+      findMyPurposeProjectId: fmpDb ? admin.app('fmp').options.projectId : null,
     },
     ts: new Date().toISOString(),
   });
@@ -423,8 +425,8 @@ app.post(
 
       return res.json({ status: 'ok' });
     } catch (e) {
-      log.error('Firestore write failed', { error: e.message, section });
-      return res.status(500).json({ error: 'Failed to save response' });
+      log.error('Firestore write failed', { error: e.message, section, code: e.code });
+      return res.status(500).json({ error: 'Failed to save response', detail: e.message, code: e.code });
     }
   }
 );
