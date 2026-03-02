@@ -342,7 +342,7 @@ app.get(
         {
           method: 'POST',
           headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model, voice: 'alloy', instructions: buildInstructions() }),
+          body: JSON.stringify({ model, voice: 'alloy' }),
         },
         10_000
       );
