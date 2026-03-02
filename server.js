@@ -275,10 +275,12 @@ app.use((req, res, next) => {
     'https://clarity-voice-ui-workplace.vercel.app',
     'https://clarity-interview-agent-was-wp.vercel.app',
     'https://find-my-purpose.vercel.app',
+    'https://clarity360hq.com',
+    'https://www.clarity360hq.com',
     // Allow any *.vercel.app subdomain for preview deployments
   ];
   const origin = req.headers.origin || '';
-  if (allowed.includes(origin) || origin.endsWith('.vercel.app') || origin.endsWith('.ngrok.io')) {
+  if (allowed.includes(origin) || origin.endsWith('.vercel.app') || origin.endsWith('.ngrok.io') || origin.endsWith('.clarity360hq.com')) {
     res.setHeader('Access-Control-Allow-Origin', origin);
   }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
