@@ -863,6 +863,169 @@ app.post('/send-email', requireAccessKey, async (req, res) => {
   }
 });
 
+// ─── /fmp/personal-report — generate + email a personal reflection report ─────
+app.post('/fmp/personal-report', requireAccessKey, async (req, res) => {
+  const { email, transcript, audience, sessionId } = req.body;
+
+  if (!email || typeof email !== 'string' || !email.includes('@')) {
+    return res.status(400).json({ error: 'Valid email is required' });
+  }
+  if (!transcript || !Array.isArray(transcript) || transcript.length === 0) {
+    return res.status(400).json({ error: 'Transcript is required' });
+  }
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return res.status(500).json({ error: 'Anthropic API key not configured' });
+  }
+  if (!process.env.RESEND_API_KEY) {
+    return res.status(500).json({ error: 'Email service not configured' });
+  }
+
+  const isYouth = audience === 'young_adult';
+  const audienceLabel = isYouth ? 'Young Adult (13–17)' : 'Adult (18+)';
+
+  const transcriptText = transcript
+    .map(t => `${t.speaker === 'clarity360' ? 'Clarity 360' : 'Participant'}: ${t.text}`)
+    .join('\n\n');
+
+  const prompt = `You are a compassionate, insightful reflection coach. Based on this Find My Purpose interview transcript, write a warm and personal reflection report for the participant.
+
+PARTICIPANT: ${audienceLabel}
+SESSION: ${sessionId || 'unknown'}
+
+INTERVIEW TRANSCRIPT:
+${transcriptText}
+
+Write a personal reflection report with these sections:
+
+**Your Reflection** — A warm 2–3 paragraph overview highlighting the unique themes and voice that came through.
+
+**The Four Pillars** — Personal observations for each area explored: Family, Friends & Community, Meaningful Work, and Faith & Purpose. Keep each to 2–3 sentences and ground it in what they actually said.
+
+**What You're Reaching For** — The specific hopes and aspirations they expressed, written back as affirmation of their vision.
+
+**What to Watch** — The challenges or drift they want to avoid, framed gently and constructively.
+
+**Your One Step** — The clearest next action or intention that emerged from the conversation, with a brief encouraging note.
+
+**A Closing Word** — 2–3 sentences of genuine encouragement, personal to what they shared — not generic.
+
+Write in second person ("you", "your"). Be warm, specific, and meaningful. Reference actual things they said. Avoid platitudes. Total: 450–650 words.`;
+
+  try {
+    // 1. Generate report with Claude
+    const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-5',
+        max_tokens: 2000,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+
+    const claudeData = await claudeRes.json();
+    if (!claudeRes.ok) {
+      log.error('Claude API error for FMP personal report', { status: claudeRes.status });
+      return res.status(502).json({ error: 'Report generation failed' });
+    }
+
+    const reportText = claudeData.content?.[0]?.text || '';
+    if (!reportText) return res.status(500).json({ error: 'Empty report generated' });
+
+    // 2. Convert markdown to HTML
+    const reportHtml = reportText
+      .split('\n\n')
+      .map(para => {
+        const p = para
+          .replace(/\*\*(.+?)\*\*/g, '<strong style="color:#92400e;">$1</strong>')
+          .replace(/\n/g, '<br>');
+        return `<p style="margin:0 0 18px;font-family:\'Helvetica Neue\',Arial,sans-serif;font-size:15px;color:#1c1917;line-height:1.85;">${p}</p>`;
+      })
+      .join('');
+
+    const dateStr = new Date().toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'short' });
+
+    const makeHtml = (isParticipant) => `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#fff7ed;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#fff7ed;padding:40px 20px;">
+    <tr><td align="center">
+      <table width="620" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 4px 32px rgba(245,158,11,0.12);">
+        <tr>
+          <td style="background:linear-gradient(135deg,#f59e0b,#d97706);padding:40px 52px;">
+            <p style="margin:0 0 6px;font-family:\'Helvetica Neue\',Arial,sans-serif;font-size:12px;font-weight:700;color:rgba(255,255,255,0.75);letter-spacing:0.14em;text-transform:uppercase;">Find My Purpose &middot; Clarity 360</p>
+            <h1 style="margin:0;font-family:\'Helvetica Neue\',Arial,sans-serif;font-size:28px;font-weight:800;color:#ffffff;">Your Personal Reflection Report</h1>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:44px 52px;">
+            ${isParticipant
+              ? `<p style="margin:0 0 28px;font-family:\'Helvetica Neue\',Arial,sans-serif;font-size:15px;color:#57534e;line-height:1.8;">Thank you for taking time to explore what matters most to you. What follows is a personal reflection drawn from everything you shared today — your hopes, your values, and the things that truly light you up.</p>`
+              : `<p style="margin:0 0 28px;font-family:\'Helvetica Neue\',Arial,sans-serif;font-size:15px;color:#57534e;line-height:1.8;">A Find My Purpose interview has been completed. Below is the personal reflection report sent to the participant at <strong>${email}</strong>.</p>`
+            }
+            <div style="background:linear-gradient(135deg,#fff7ed,#fce7f3);border-radius:16px;padding:32px 36px;border:1px solid rgba(245,158,11,0.15);">
+              ${reportHtml}
+            </div>
+            <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;padding-top:20px;border-top:1px solid #fde68a;">
+              <tr>
+                <td style="font-family:\'Helvetica Neue\',Arial,sans-serif;font-size:12px;color:#a8a29e;">
+                  Session: <span style="font-weight:600;color:#78716c;">${sessionId || 'unknown'}</span> &nbsp;&middot;&nbsp; ${dateStr}
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#fff7ed;padding:20px 52px;border-top:1px solid #fde68a;">
+            <p style="margin:0;font-family:\'Helvetica Neue\',Arial,sans-serif;font-size:12px;color:#a8a29e;">Generated by Clarity 360 &middot; Find My Purpose</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+    // 3. Send to participant
+    const pRes = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: 'Find My Purpose <onboarding@resend.dev>',
+        to: [email],
+        subject: 'Your Find My Purpose Reflection Report',
+        html: makeHtml(true),
+      }),
+    });
+    const pData = await pRes.json();
+    if (!pRes.ok) log.error('FMP participant email failed', { status: pRes.status, body: JSON.stringify(pData) });
+
+    // 4. Send admin copy to knoell@engagingonline.net
+    const aRes = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: 'Find My Purpose <onboarding@resend.dev>',
+        to: ['knoell@engagingonline.net'],
+        reply_to: email,
+        subject: `FMP Personal Report — ${email}`,
+        html: makeHtml(false),
+      }),
+    });
+    const aData = await aRes.json();
+    if (!aRes.ok) log.error('FMP admin email failed', { status: aRes.status, body: JSON.stringify(aData) });
+
+    log.info('FMP personal report sent', { participant: email, pId: pData.id, aId: aData.id, sessionId });
+    return res.json({ status: 'ok' });
+  } catch (e) {
+    log.error('FMP personal report error', { error: e.message });
+    return res.status(500).json({ error: 'Personal report generation failed' });
+  }
+});
+
 // ─── 404 & Error Handlers ─────────────────────────────────────────────────────
 app.use((req, res) => {
   res.status(404).json({ error: 'Not found' });
