@@ -863,6 +863,112 @@ app.post('/send-email', requireAccessKey, async (req, res) => {
   }
 });
 
+// ─── /fmp/register-participant — save participant + send return code email ─────
+app.post('/fmp/register-participant', requireAccessKey, async (req, res) => {
+  const { email, return_code, session_id, audience } = req.body;
+
+  if (!email || typeof email !== 'string' || !email.includes('@')) {
+    return res.status(400).json({ error: 'Valid email is required' });
+  }
+  if (!return_code || !session_id) {
+    return res.status(400).json({ error: 'return_code and session_id are required' });
+  }
+  if (!process.env.RESEND_API_KEY) {
+    return res.status(500).json({ error: 'Email service not configured' });
+  }
+
+  // 1. Save participant to fmpDb
+  if (fmpDb) {
+    try {
+      await fmpDb.collection('participants').add({
+        email,
+        return_code,
+        session_id,
+        audience: audience || 'adult',
+        created_at: new Date().toISOString(),
+        status: 'session_1_complete',
+      });
+      log.info('FMP participant registered', { email, return_code, session_id });
+    } catch (e) {
+      log.error('FMP participant Firebase write failed', { error: e.message });
+      // Continue to email even if Firebase write fails
+    }
+  }
+
+  // 2. Send return code email to participant
+  const dateStr = new Date().toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'short' });
+  const html = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#fff7ed;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#fff7ed;padding:40px 20px;">
+    <tr><td align="center">
+      <table width="580" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 4px 32px rgba(245,158,11,0.12);">
+        <tr>
+          <td style="background:linear-gradient(135deg,#f59e0b,#d97706);padding:36px 48px;">
+            <p style="margin:0 0 6px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:700;color:rgba(255,255,255,0.75);letter-spacing:0.14em;text-transform:uppercase;">Find My Purpose &middot; Clarity 360</p>
+            <h1 style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:26px;font-weight:800;color:#ffffff;">Session 1 Complete!</h1>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:40px 48px;">
+            <p style="margin:0 0 24px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;color:#57534e;line-height:1.8;">
+              Thank you for completing your first Find My Purpose session. Your personal reflection report will arrive in a separate email shortly.
+            </p>
+            <table width="100%" cellpadding="0" cellspacing="0" style="background:linear-gradient(135deg,#dc2626,#b91c1c);border-radius:16px;padding:28px 32px;margin-bottom:28px;">
+              <tr>
+                <td style="text-align:center;">
+                  <p style="margin:0 0 8px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:700;color:rgba(255,255,255,0.8);letter-spacing:0.14em;text-transform:uppercase;">Your Return Code</p>
+                  <p style="margin:0 0 10px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:40px;font-weight:800;color:#ffffff;letter-spacing:0.08em;">${return_code}</p>
+                  <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;color:rgba(255,255,255,0.85);">Save this code to continue your journey in your next session.</p>
+                </td>
+              </tr>
+            </table>
+            <p style="margin:0 0 8px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:14px;color:#57534e;line-height:1.7;">
+              You can return to <a href="https://findmypurpose.clarity360hq.com" style="color:#d97706;font-weight:700;">findmypurpose.clarity360hq.com</a> and enter this code when you begin your next session to pick up where you left off.
+            </p>
+            <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;padding-top:20px;border-top:1px solid #fde68a;">
+              <tr>
+                <td style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#a8a29e;">
+                  Registered: ${dateStr}
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#fff7ed;padding:20px 48px;border-top:1px solid #fde68a;">
+            <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#a8a29e;">Find My Purpose &middot; Clarity 360 &mdash; Engaging Online</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  try {
+    const emailRes = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: 'Find My Purpose <onboarding@resend.dev>',
+        to: [email],
+        subject: `Your Find My Purpose Return Code: ${return_code}`,
+        html,
+      }),
+    });
+    const emailData = await emailRes.json();
+    if (!emailRes.ok) {
+      log.error('FMP return code email failed', { status: emailRes.status, body: JSON.stringify(emailData) });
+      return res.status(502).json({ error: 'Failed to send return code email' });
+    }
+    log.info('FMP return code email sent', { email, return_code, emailId: emailData.id });
+    return res.json({ status: 'ok', return_code });
+  } catch (e) {
+    log.error('FMP register-participant error', { error: e.message });
+    return res.status(500).json({ error: 'Registration failed' });
+  }
+});
+
 // ─── /fmp/personal-report — generate + email a personal reflection report ─────
 app.post('/fmp/personal-report', requireAccessKey, async (req, res) => {
   const { email, transcript, audience, sessionId } = req.body;
