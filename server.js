@@ -420,7 +420,7 @@ app.post(
           const clientSnap = await fmpDb.collection('clients').where('access_code', '==', client_id).limit(1).get();
           if (!clientSnap.empty) {
             const clientRef = clientSnap.docs[0].ref;
-            await clientRef.update({ sessions_used: admin.app('fmp').firestore.FieldValue.increment(1) });
+            await clientRef.update({ sessions_used: admin.firestore.FieldValue.increment(1) });
           }
         } catch (clientErr) {
           log.warn('Client usage increment failed', { client_id, error: clientErr.message });
@@ -466,6 +466,9 @@ app.get('/admin/sessions', requireAccessKey, async (req, res) => {
 app.post('/admin/generate-report', requireAccessKey, async (req, res) => {
   try {
     const { prompt } = req.body;
+    if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+      return res.status(400).json({ error: 'prompt is required' });
+    }
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -529,6 +532,9 @@ app.get('/fmp/admin/sessions', requireAccessKey, async (req, res) => {
 app.post('/fmp/admin/generate-report', requireAccessKey, async (req, res) => {
   try {
     const { prompt } = req.body;
+    if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+      return res.status(400).json({ error: 'prompt is required' });
+    }
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
