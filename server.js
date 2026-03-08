@@ -1138,6 +1138,246 @@ Write in second person ("you", "your"). Be warm, specific, and meaningful. Refer
   }
 });
 
+// ─── FMP: Get Participant by Return Code (+ extract Session 1 themes) ────────
+app.get('/fmp/participant/:code', requireAccessKey, async (req, res) => {
+  if (!fmpDb) return res.status(503).json({ error: 'Find My Purpose Firestore not available' });
+  const normalizedCode = (req.params.code || '').toUpperCase().trim();
+  const emailParam = (req.query.email || '').trim().toLowerCase();
+
+  if (!normalizedCode) return res.status(400).json({ error: 'Return code is required' });
+
+  try {
+    const snap = await fmpDb.collection('participants')
+      .where('return_code', '==', normalizedCode)
+      .limit(1)
+      .get();
+
+    if (snap.empty) {
+      return res.status(404).json({ error: 'Return code not found. Please check and try again.' });
+    }
+
+    const participantDoc = snap.docs[0];
+    const participant = participantDoc.data();
+
+    // Optional email verification
+    if (emailParam && participant.email.toLowerCase() !== emailParam) {
+      return res.status(403).json({ error: 'Email does not match this return code.' });
+    }
+
+    // Fetch session 1 transcript to extract themes
+    let themes = {};
+    try {
+      const transcriptSnap = await fmpDb.collection('responses')
+        .where('session_id', '==', participant.session_id)
+        .where('section', '==', 'find_my_purpose')
+        .get();
+
+      const turns = transcriptSnap.docs
+        .map(d => ({ text: d.data().followup_text || '', ts: d.data().ts || '' }))
+        .sort((a, b) => a.ts.localeCompare(b.ts));
+
+      const transcriptText = turns
+        .map(t => t.text)
+        .filter(t => t.trim())
+        .join('\n');
+
+      if (transcriptText && process.env.ANTHROPIC_API_KEY) {
+        const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': process.env.ANTHROPIC_API_KEY,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({
+            model: 'claude-haiku-4-5-20251001',
+            max_tokens: 600,
+            messages: [{
+              role: 'user',
+              content: `Based on this Find My Purpose interview transcript, identify one key aspiration or theme from each of the four pillars. Return ONLY a JSON object — no surrounding text, no markdown.
+
+TRANSCRIPT:
+${transcriptText.substring(0, 5000)}
+
+Return this exact JSON structure (all values 1–2 sentences, specific and personal to what was said):
+{
+  "family": "key aspiration or theme from Family discussion",
+  "friends": "key aspiration or theme from Friends & Community discussion",
+  "work": "key aspiration or theme from Meaningful Work discussion",
+  "faith": "key aspiration or theme from Faith & Transcendence discussion",
+  "summary": "one sentence capturing the overall spirit of what this person is reaching for"
+}`,
+            }],
+          }),
+        });
+        if (claudeRes.ok) {
+          const claudeData = await claudeRes.json();
+          const text = claudeData.content?.[0]?.text || '{}';
+          const jsonMatch = text.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            try { themes = JSON.parse(jsonMatch[0]); } catch (_) {}
+          }
+        }
+      }
+    } catch (transcriptErr) {
+      log.warn('FMP transcript fetch for themes failed', { error: transcriptErr.message });
+    }
+
+    return res.json({
+      participant: {
+        email: participant.email,
+        audience: participant.audience || 'adult',
+        status: participant.status || 'session_1_complete',
+        session_id: participant.session_id,
+      },
+      themes,
+    });
+  } catch (e) {
+    log.error('FMP participant lookup failed', { error: e.message, code: normalizedCode });
+    return res.status(500).json({ error: 'Participant lookup failed' });
+  }
+});
+
+// ─── FMP: Save Session 2 Goals ────────────────────────────────────────────────
+app.patch('/fmp/participant/:code/goals', requireAccessKey, async (req, res) => {
+  if (!fmpDb) return res.status(503).json({ error: 'Find My Purpose Firestore not available' });
+  const normalizedCode = (req.params.code || '').toUpperCase().trim();
+  const { goals, session2_session_id } = req.body;
+
+  if (!normalizedCode) return res.status(400).json({ error: 'Return code is required' });
+  if (!goals || typeof goals !== 'object') return res.status(400).json({ error: 'goals object is required' });
+
+  try {
+    const snap = await fmpDb.collection('participants')
+      .where('return_code', '==', normalizedCode)
+      .limit(1)
+      .get();
+
+    if (snap.empty) return res.status(404).json({ error: 'Participant not found' });
+
+    await snap.docs[0].ref.update({
+      goals,
+      session2_session_id: session2_session_id || null,
+      session2_completed_at: new Date().toISOString(),
+      status: 'session_2_complete',
+    });
+
+    const goalCount = Object.values(goals).filter(Boolean).length;
+    log.info('FMP session 2 goals saved', { code: normalizedCode, goalCount });
+    return res.json({ status: 'ok' });
+  } catch (e) {
+    log.error('FMP goals save failed', { error: e.message });
+    return res.status(500).json({ error: 'Failed to save goals' });
+  }
+});
+
+// ─── FMP: Session 2 Completion Email ─────────────────────────────────────────
+app.post('/fmp/session2-email', requireAccessKey, async (req, res) => {
+  const { email, goals, returnCode, audience } = req.body;
+
+  if (!email || typeof email !== 'string' || !email.includes('@')) {
+    return res.status(400).json({ error: 'Valid email is required' });
+  }
+  if (!goals || typeof goals !== 'object') {
+    return res.status(400).json({ error: 'goals object is required' });
+  }
+  if (!process.env.RESEND_API_KEY) {
+    return res.status(500).json({ error: 'Email service not configured' });
+  }
+
+  const dateStr = new Date().toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'short' });
+  const goalRows = [
+    { pillar: '🏡 Family', goal: goals.family },
+    { pillar: '🤝 Friends & Community', goal: goals.friends },
+    { pillar: '💼 Meaningful Work', goal: goals.work },
+    { pillar: '✨ Faith & Transcendence', goal: goals.faith },
+  ]
+    .filter(g => g.goal)
+    .map(g => `<tr><td style="padding:20px 24px;border-bottom:1px solid #fde68a;"><p style="margin:0 0 6px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:700;color:#d97706;letter-spacing:0.1em;text-transform:uppercase;">${g.pillar}</p><p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;color:#1c1917;line-height:1.7;">${g.goal}</p></td></tr>`)
+    .join('');
+
+  const goalCount = [goals.family, goals.friends, goals.work, goals.faith].filter(Boolean).length;
+
+  const html = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#fff7ed;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#fff7ed;padding:40px 20px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 4px 32px rgba(245,158,11,0.12);">
+        <tr>
+          <td style="background:linear-gradient(135deg,#f59e0b,#d97706);padding:40px 48px;">
+            <p style="margin:0 0 6px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:700;color:rgba(255,255,255,0.75);letter-spacing:0.14em;text-transform:uppercase;">Find My Purpose &middot; Clarity 360</p>
+            <h1 style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:26px;font-weight:800;color:#ffffff;">Your Session 2 Goals</h1>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:40px 48px;">
+            <p style="margin:0 0 28px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;color:#57534e;line-height:1.8;">
+              You've completed Session 2 and created ${goalCount} SMART ${goalCount === 1 ? 'goal' : 'goals'} across the four pillars of a well-lived life. These are your intentions — keep them somewhere you'll see them.
+            </p>
+            <table width="100%" cellpadding="0" cellspacing="0" style="background:linear-gradient(135deg,#fff7ed,#fffbeb);border-radius:16px;overflow:hidden;border:1px solid #fde68a;margin-bottom:28px;">
+              ${goalRows}
+            </table>
+            <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:14px;color:#57534e;line-height:1.8;">
+              These goals are yours — specific, achievable, and connected to what you said matters most. Come back to them regularly. <strong style="color:#92400e;">You're already on your way.</strong>
+            </p>
+            <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;padding-top:20px;border-top:1px solid #fde68a;">
+              <tr>
+                <td style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#a8a29e;">
+                  Return code: <span style="font-weight:700;color:#d97706;">${returnCode || '—'}</span> &nbsp;&middot;&nbsp; ${dateStr}
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#fff7ed;padding:20px 48px;border-top:1px solid #fde68a;">
+            <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#a8a29e;">Find My Purpose &middot; Clarity 360 &mdash; Engaging Online</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  try {
+    const pRes = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: 'Find My Purpose <onboarding@resend.dev>',
+        to: [email],
+        subject: 'Your Find My Purpose Session 2 Goals',
+        html,
+      }),
+    });
+    const pData = await pRes.json();
+    if (!pRes.ok) {
+      log.error('FMP session2 email failed', { status: pRes.status, body: JSON.stringify(pData) });
+      return res.status(502).json({ error: 'Failed to send goals email' });
+    }
+
+    // Admin copy
+    await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: 'Find My Purpose <onboarding@resend.dev>',
+        to: ['knoell@engagingonline.net'],
+        reply_to: email,
+        subject: `FMP Session 2 Goals — ${email}`,
+        html,
+      }),
+    }).catch(e => log.warn('FMP session2 admin copy failed', { error: e.message }));
+
+    log.info('FMP session2 email sent', { email, goalCount, returnCode });
+    return res.json({ status: 'ok' });
+  } catch (e) {
+    log.error('FMP session2 email error', { error: e.message });
+    return res.status(500).json({ error: 'Email send failed' });
+  }
+});
+
 // ─── 404 & Error Handlers ─────────────────────────────────────────────────────
 app.use((req, res) => {
   res.status(404).json({ error: 'Not found' });
