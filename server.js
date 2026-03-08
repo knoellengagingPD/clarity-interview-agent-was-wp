@@ -189,6 +189,7 @@ const VALID_SECTIONS = new Set([
   'dream_big',
   'superintendent_interview',
   'find_my_purpose',
+  'find_my_purpose_s2',
 ]);
 
 const VALID_ROLES = new Set([
@@ -315,8 +316,42 @@ app.use((req, res, next) => {
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
-// Health check — shows both database statuses
-app.get('/health', (req, res) => {
+// Health check — shows both database statuses and document counts
+app.get('/health', async (req, res) => {
+  const counts = {};
+
+  // Count Clarity 360 responses by section
+  if (db) {
+    try {
+      const sections = ['superintendent_interview', 'edscls_safety', 'dream_big'];
+      await Promise.all(sections.map(async (sec) => {
+        const snap = await db.collection('responses').where('section', '==', sec).count().get();
+        counts[`clarity360_${sec}`] = snap.data().count;
+      }));
+      const totalSnap = await db.collection('responses').count().get();
+      counts['clarity360_total'] = totalSnap.data().count;
+    } catch (e) {
+      counts['clarity360_error'] = e.message;
+    }
+  }
+
+  // Count Find My Purpose responses by section
+  if (fmpDb) {
+    try {
+      const fmpSections = ['find_my_purpose', 'find_my_purpose_s2'];
+      await Promise.all(fmpSections.map(async (sec) => {
+        const snap = await fmpDb.collection('responses').where('section', '==', sec).count().get();
+        counts[`fmp_${sec}`] = snap.data().count;
+      }));
+      const fmpTotalSnap = await fmpDb.collection('responses').count().get();
+      counts['fmp_total_responses'] = fmpTotalSnap.data().count;
+      const fmpParticipantsSnap = await fmpDb.collection('participants').count().get();
+      counts['fmp_total_participants'] = fmpParticipantsSnap.data().count;
+    } catch (e) {
+      counts['fmp_error'] = e.message;
+    }
+  }
+
   res.json({
     status: 'ok',
     databases: {
@@ -325,6 +360,7 @@ app.get('/health', (req, res) => {
       findMyPurpose: fmpDb ? 'connected' : 'disabled',
       findMyPurposeProjectId: fmpDb ? admin.app('fmp').options.projectId : null,
     },
+    counts,
     ts: new Date().toISOString(),
   });
 });
@@ -458,7 +494,12 @@ app.get('/admin/sessions', requireAccessKey, async (req, res) => {
     }
     return res.json({ sessions: Object.values(sessionMap), total: Object.keys(sessionMap).length });
   } catch (e) {
-    return res.status(500).json({ error: 'Failed to fetch sessions' });
+    console.error('[admin/sessions] Firestore error:', e);
+    return res.status(500).json({
+      error: 'Failed to fetch sessions',
+      detail: e.message || String(e),
+      hint: e.message && e.message.includes('index') ? 'A Firestore composite index may be required for this filter combination. Check the Firebase console.' : undefined,
+    });
   }
 });
 
