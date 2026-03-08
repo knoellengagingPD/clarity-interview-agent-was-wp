@@ -453,6 +453,8 @@ app.post(
       doc.followup_text = followup_text || '';
       if (req.body.school_name) doc.school_name = String(req.body.school_name).trim();
       if (req.body.district) doc.district = String(req.body.district).trim();
+      if (req.body.domain) doc.domain = String(req.body.domain).slice(0, 32);
+      if (req.body.token) doc.token = String(req.body.token).slice(0, 20);
     }
 
     try {
