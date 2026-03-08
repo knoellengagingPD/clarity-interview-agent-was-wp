@@ -190,6 +190,10 @@ const VALID_SECTIONS = new Set([
   'superintendent_interview',
   'find_my_purpose',
   'find_my_purpose_s2',
+  'school_climate_students',
+  'school_climate_teachers',
+  'school_climate_staff',
+  'school_climate_parents',
 ]);
 
 const VALID_ROLES = new Set([
@@ -415,8 +419,8 @@ app.post(
 
     const { session_id, section, question_id, role, school_id, rating, followup_text, text, client_id } = req.body;
 
-    // Route find_my_purpose to fmpDb, everything else to db
-    const isFMP = section === 'find_my_purpose';
+    // Route find_my_purpose / find_my_purpose_s2 to fmpDb, everything else to db
+    const isFMP = section === 'find_my_purpose' || section === 'find_my_purpose_s2';
     const targetDb = isFMP ? fmpDb : db;
 
     if (!targetDb) {
@@ -441,9 +445,14 @@ app.post(
     } else if (section === 'superintendent_interview') {
       doc.followup_text = followup_text || '';
       if (rating !== undefined) doc.rating = rating;
-    } else if (section === 'find_my_purpose') {
+    } else if (section === 'find_my_purpose' || section === 'find_my_purpose_s2') {
       doc.followup_text = followup_text || '';
       if (client_id) doc.client_id = client_id;
+    } else if (section.startsWith('school_climate_')) {
+      doc.rating = rating;
+      doc.followup_text = followup_text || '';
+      if (req.body.school_name) doc.school_name = String(req.body.school_name).trim();
+      if (req.body.district) doc.district = String(req.body.district).trim();
     }
 
     try {
@@ -1416,6 +1425,225 @@ app.post('/fmp/session2-email', requireAccessKey, async (req, res) => {
   } catch (e) {
     log.error('FMP session2 email error', { error: e.message });
     return res.status(500).json({ error: 'Email send failed' });
+  }
+});
+
+// ─── School Climate: Token Lookup ─────────────────────────────────────────────
+// GET /school-climate/token/:token
+// Public endpoint — no access key required (called by the interview page before auth)
+// Returns role, school_name, school_id, district for a valid active token.
+app.get('/school-climate/token/:token', async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
+  try {
+    const normalizedToken = req.params.token.trim().toUpperCase();
+
+    const snap = await db.collection('climate_tokens')
+      .where('token', '==', normalizedToken)
+      .limit(1)
+      .get();
+
+    if (snap.empty) {
+      return res.status(404).json({ error: 'Token not found' });
+    }
+
+    const data = snap.docs[0].data();
+
+    if (data.status !== 'active') {
+      return res.status(404).json({ error: 'Token has expired or been deactivated' });
+    }
+
+    return res.json({
+      role: data.role,
+      school_name: data.school_name,
+      school_id: data.school_id,
+      district: data.district,
+    });
+  } catch (e) {
+    log.error('Climate token lookup failed', { error: e.message });
+    return res.status(500).json({ error: 'Failed to look up token' });
+  }
+});
+
+// ─── School Climate: Create Token ─────────────────────────────────────────────
+// POST /school-climate/tokens
+// Requires access key. Accepts { school_name, school_id, district, role }.
+// Generates a unique SCL-XXXXXX token and stores it in climate_tokens collection.
+app.post('/school-climate/tokens', requireAccessKey, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
+  try {
+    const { school_name, school_id, district, role } = req.body;
+
+    if (!school_name || typeof school_name !== 'string') {
+      return res.status(400).json({ error: 'school_name is required' });
+    }
+    if (!school_id || typeof school_id !== 'string') {
+      return res.status(400).json({ error: 'school_id is required' });
+    }
+    if (!district || typeof district !== 'string') {
+      return res.status(400).json({ error: 'district is required' });
+    }
+
+    const validRoles = ['students', 'teachers', 'staff', 'parents'];
+    if (!role || !validRoles.includes(role)) {
+      return res.status(400).json({ error: `role must be one of: ${validRoles.join(', ')}` });
+    }
+
+    // Generate a unique SCL-XXXXXX token (omit easily-confused chars)
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let token;
+    let attempts = 0;
+    do {
+      const rand = Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+      token = `SCL-${rand}`;
+      const existing = await db.collection('climate_tokens').where('token', '==', token).limit(1).get();
+      if (existing.empty) break;
+      attempts++;
+    } while (attempts < 10);
+
+    if (attempts >= 10) {
+      return res.status(500).json({ error: 'Could not generate a unique token. Please try again.' });
+    }
+
+    const doc = {
+      token,
+      school_name: school_name.trim(),
+      school_id: school_id.trim(),
+      district: district.trim(),
+      role,
+      status: 'active',
+      created_at: new Date().toISOString(),
+    };
+
+    const ref = await db.collection('climate_tokens').add(doc);
+    log.info('Climate token created', { token, school_id, role });
+    return res.status(201).json({ status: 'ok', id: ref.id, ...doc });
+  } catch (e) {
+    log.error('Climate token creation failed', { error: e.message });
+    return res.status(500).json({ error: 'Failed to create token' });
+  }
+});
+
+// ─── School Climate: Sessions & Scores ────────────────────────────────────────
+// GET /school-climate/sessions?school_id=&role=&start_date=&end_date=
+// Requires access key. Returns sessions grouped by role with per-question and
+// per-domain average scores. Domain is derived from the question_id prefix
+// (e.g. "safety_3" → safety domain, "engagement_1" → engagement domain).
+app.get('/school-climate/sessions', requireAccessKey, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
+  try {
+    const { school_id, role, start_date, end_date } = req.query;
+
+    if (!school_id) {
+      return res.status(400).json({ error: 'school_id query param is required' });
+    }
+
+    const validRoles = ['students', 'teachers', 'staff', 'parents'];
+    const sectionsToQuery = (role && validRoles.includes(role))
+      ? [`school_climate_${role}`]
+      : validRoles.map(r => `school_climate_${r}`);
+
+    // Query each section separately so we avoid composite-index requirements
+    // (section + school_id + ts range would need a composite index per section)
+    const allDocs = [];
+    await Promise.all(sectionsToQuery.map(async (section) => {
+      let q = db.collection('responses')
+        .where('section', '==', section)
+        .where('school_id', '==', school_id);
+      if (start_date) q = q.where('ts', '>=', new Date(start_date).toISOString());
+      if (end_date) {
+        const ed = new Date(end_date);
+        ed.setDate(ed.getDate() + 1);
+        q = q.where('ts', '<=', ed.toISOString());
+      }
+      try {
+        const snap = await q.get();
+        snap.docs.forEach(d => allDocs.push({ id: d.id, ...d.data() }));
+      } catch (qErr) {
+        log.warn('Climate section query failed', { section, error: qErr.message });
+      }
+    }));
+
+    // Aggregate by role (e.g. "teachers") → sessions + running score totals
+    const byRole = {};
+
+    for (const doc of allDocs) {
+      const docRole = (doc.section || '').replace('school_climate_', '') || 'unknown';
+
+      if (!byRole[docRole]) {
+        byRole[docRole] = {
+          sessions: {},
+          question_totals: {},
+          question_counts: {},
+          domain_totals: {},
+          domain_counts: {},
+          total_rated_responses: 0,
+        };
+      }
+      const rd = byRole[docRole];
+
+      // Track per-session summary
+      const sid = doc.session_id || 'unknown';
+      if (!rd.sessions[sid]) {
+        rd.sessions[sid] = {
+          session_id: sid,
+          school_id: doc.school_id,
+          school_name: doc.school_name || null,
+          district: doc.district || null,
+          ts: doc.ts,
+          ratings: {},
+        };
+      }
+
+      // Accumulate scores only for rated questions
+      if (doc.question_id && doc.rating !== undefined && doc.rating !== null) {
+        const qid = String(doc.question_id);
+        const rating = Number(doc.rating);
+        if (!isNaN(rating)) {
+          rd.sessions[sid].ratings[qid] = rating;
+
+          rd.question_totals[qid] = (rd.question_totals[qid] || 0) + rating;
+          rd.question_counts[qid] = (rd.question_counts[qid] || 0) + 1;
+
+          // Derive domain from question_id prefix (e.g. "safety_3" → "safety")
+          const domain = qid.includes('_') ? qid.split('_')[0] : 'other';
+          rd.domain_totals[domain] = (rd.domain_totals[domain] || 0) + rating;
+          rd.domain_counts[domain] = (rd.domain_counts[domain] || 0) + 1;
+          rd.total_rated_responses++;
+        }
+      }
+    }
+
+    // Build final response
+    const data = {};
+    for (const [r, rd] of Object.entries(byRole)) {
+      const question_averages = {};
+      for (const qid of Object.keys(rd.question_totals)) {
+        question_averages[qid] = Math.round((rd.question_totals[qid] / rd.question_counts[qid]) * 100) / 100;
+      }
+      const domain_averages = {};
+      for (const dom of Object.keys(rd.domain_totals)) {
+        domain_averages[dom] = Math.round((rd.domain_totals[dom] / rd.domain_counts[dom]) * 100) / 100;
+      }
+      data[r] = {
+        total_sessions: Object.keys(rd.sessions).length,
+        total_rated_responses: rd.total_rated_responses,
+        question_averages,
+        domain_averages,
+        sessions: Object.values(rd.sessions).sort((a, b) => (b.ts || '').localeCompare(a.ts || '')),
+      };
+    }
+
+    return res.json({
+      school_id,
+      roles_queried: sectionsToQuery.map(s => s.replace('school_climate_', '')),
+      data,
+    });
+  } catch (e) {
+    log.error('Climate sessions fetch failed', { error: e.message });
+    return res.status(500).json({
+      error: 'Failed to fetch school climate sessions',
+      detail: e.message || String(e),
+    });
   }
 });
 
