@@ -487,7 +487,7 @@ app.get('/admin/sessions', requireAccessKey, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
   try {
     const { section, start, end, hide_test, show_archived } = req.query;
-    const shouldHideTest = hide_test !== 'false';       // default: hide test data
+    const shouldHideTest = hide_test === 'true';         // only hide test data when explicitly requested
     const shouldShowArchived = show_archived === 'true'; // default: hide archived
 
     let query = db.collection('responses');
@@ -1563,7 +1563,7 @@ app.get('/school-climate/sessions', requireAccessKey, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
   try {
     const { school_id, role, start_date, end_date, hide_test, show_archived } = req.query;
-    const shouldHideTest = hide_test !== 'false';       // default: hide test data
+    const shouldHideTest = hide_test === 'true';         // only hide test data when explicitly requested
     const shouldShowArchived = show_archived === 'true'; // default: hide archived
 
     if (!school_id) {
