@@ -486,7 +486,10 @@ app.post(
 app.get('/admin/sessions', requireAccessKey, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
   try {
-    const { section, start, end } = req.query;
+    const { section, start, end, hide_test, show_archived } = req.query;
+    const shouldHideTest = hide_test !== 'false';       // default: hide test data
+    const shouldShowArchived = show_archived === 'true'; // default: hide archived
+
     let query = db.collection('responses');
     if (section) query = query.where('section', '==', section);
     if (start) query = query.where('ts', '>=', new Date(start).toISOString());
@@ -500,10 +503,35 @@ app.get('/admin/sessions', requireAccessKey, async (req, res) => {
     const sessionMap = {};
     for (const doc of docs) {
       const sid = doc.session_id || 'unknown';
-      if (!sessionMap[sid]) sessionMap[sid] = { session_id: sid, turns: [] };
+      if (!sessionMap[sid]) sessionMap[sid] = { session_id: sid, turns: [], ts: doc.ts };
       sessionMap[sid].turns.push({ question_id: doc.question_id, followup_text: doc.followup_text || doc.text || '', ts: doc.ts });
+      // Track earliest ts for the session
+      if (doc.ts && (!sessionMap[sid].ts || doc.ts < sessionMap[sid].ts)) {
+        sessionMap[sid].ts = doc.ts;
+      }
     }
-    return res.json({ sessions: Object.values(sessionMap), total: Object.keys(sessionMap).length });
+
+    // Fetch flag sets for filtering
+    let archivedSessionIds = new Set();
+    if (!shouldShowArchived) {
+      try {
+        const snap = await db.collection('clarity360_session_flags').where('status', '==', 'archived').get();
+        snap.docs.forEach(d => archivedSessionIds.add(d.data().session_id));
+      } catch (e) { /* ignore — filtering best-effort */ }
+    }
+    let testSessionIds = new Set();
+    if (shouldHideTest) {
+      try {
+        const snap = await db.collection('clarity360_session_flags').where('is_test', '==', true).get();
+        snap.docs.forEach(d => testSessionIds.add(d.data().session_id));
+      } catch (e) { /* ignore */ }
+    }
+
+    let sessions = Object.values(sessionMap);
+    if (!shouldShowArchived) sessions = sessions.filter(s => !archivedSessionIds.has(s.session_id));
+    if (shouldHideTest) sessions = sessions.filter(s => !testSessionIds.has(s.session_id));
+
+    return res.json({ sessions, total: sessions.length });
   } catch (e) {
     console.error('[admin/sessions] Firestore error:', e);
     return res.status(500).json({
@@ -1473,7 +1501,7 @@ app.get('/school-climate/token/:token', async (req, res) => {
 app.post('/school-climate/tokens', requireAccessKey, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
   try {
-    const { school_name, school_id, district, role } = req.body;
+    const { school_name, school_id, district, role, is_test } = req.body;
 
     if (!school_name || typeof school_name !== 'string') {
       return res.status(400).json({ error: 'school_name is required' });
@@ -1512,6 +1540,7 @@ app.post('/school-climate/tokens', requireAccessKey, async (req, res) => {
       school_id: school_id.trim(),
       district: district.trim(),
       role,
+      is_test: is_test === true,
       status: 'active',
       created_at: new Date().toISOString(),
     };
@@ -1533,7 +1562,9 @@ app.post('/school-climate/tokens', requireAccessKey, async (req, res) => {
 app.get('/school-climate/sessions', requireAccessKey, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
   try {
-    const { school_id, role, start_date, end_date } = req.query;
+    const { school_id, role, start_date, end_date, hide_test, show_archived } = req.query;
+    const shouldHideTest = hide_test !== 'false';       // default: hide test data
+    const shouldShowArchived = show_archived === 'true'; // default: hide archived
 
     if (!school_id) {
       return res.status(400).json({ error: 'school_id query param is required' });
@@ -1565,10 +1596,44 @@ app.get('/school-climate/sessions', requireAccessKey, async (req, res) => {
       }
     }));
 
+    // Collect test token values and archived session IDs for filtering
+    let testTokenSet = new Set();
+    if (shouldHideTest) {
+      try {
+        const testSnap = await db.collection('climate_tokens')
+          .where('school_id', '==', school_id)
+          .where('is_test', '==', true)
+          .get();
+        testSnap.docs.forEach(d => testTokenSet.add(d.data().token));
+      } catch (e) {
+        log.warn('Failed to fetch test tokens for filtering', { error: e.message });
+      }
+    }
+
+    let archivedSessionSet = new Set();
+    if (!shouldShowArchived) {
+      try {
+        const archSnap = await db.collection('climate_session_flags')
+          .where('school_id', '==', school_id)
+          .where('status', '==', 'archived')
+          .get();
+        archSnap.docs.forEach(d => archivedSessionSet.add(d.data().session_id));
+      } catch (e) {
+        log.warn('Failed to fetch archived sessions for filtering', { error: e.message });
+      }
+    }
+
+    // Apply filters
+    const filteredDocs = allDocs.filter(doc => {
+      if (shouldHideTest && doc.token && testTokenSet.has(doc.token)) return false;
+      if (!shouldShowArchived && doc.session_id && archivedSessionSet.has(doc.session_id)) return false;
+      return true;
+    });
+
     // Aggregate by role (e.g. "teachers") → sessions + running score totals
     const byRole = {};
 
-    for (const doc of allDocs) {
+    for (const doc of filteredDocs) {
       const docRole = (doc.section || '').replace('school_climate_', '') || 'unknown';
 
       if (!byRole[docRole]) {
@@ -1646,6 +1711,64 @@ app.get('/school-climate/sessions', requireAccessKey, async (req, res) => {
       error: 'Failed to fetch school climate sessions',
       detail: e.message || String(e),
     });
+  }
+});
+
+// ─── School Climate: Archive / Unarchive Session ──────────────────────────────
+// PATCH /school-climate/sessions/:sessionId
+// Body: { school_id, action: 'archive' | 'unarchive' }
+app.patch('/school-climate/sessions/:sessionId', requireAccessKey, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
+  try {
+    const { sessionId } = req.params;
+    const { school_id, action } = req.body;
+    if (!sessionId || !school_id) {
+      return res.status(400).json({ error: 'sessionId and school_id are required' });
+    }
+    const flagRef = db.collection('climate_session_flags').doc(sessionId);
+    if (action === 'archive') {
+      await flagRef.set({ session_id: sessionId, school_id, status: 'archived', created_at: new Date().toISOString() });
+      log.info('Climate session archived', { sessionId, school_id });
+      return res.json({ status: 'ok', session_id: sessionId, action: 'archived' });
+    } else if (action === 'unarchive') {
+      await flagRef.delete();
+      log.info('Climate session unarchived', { sessionId, school_id });
+      return res.json({ status: 'ok', session_id: sessionId, action: 'unarchived' });
+    } else {
+      return res.status(400).json({ error: 'action must be "archive" or "unarchive"' });
+    }
+  } catch (e) {
+    log.error('Climate session flag update failed', { error: e.message });
+    return res.status(500).json({ error: 'Failed to update session flag' });
+  }
+});
+
+// ─── Clarity 360: Archive / Unarchive Session ─────────────────────────────────
+// PATCH /admin/sessions/:sessionId
+// Body: { action: 'archive' | 'unarchive' }
+app.patch('/admin/sessions/:sessionId', requireAccessKey, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
+  try {
+    const { sessionId } = req.params;
+    const { action } = req.body;
+    if (!sessionId) {
+      return res.status(400).json({ error: 'sessionId is required' });
+    }
+    const flagRef = db.collection('clarity360_session_flags').doc(sessionId);
+    if (action === 'archive') {
+      await flagRef.set({ session_id: sessionId, status: 'archived', created_at: new Date().toISOString() }, { merge: true });
+      log.info('C360 session archived', { sessionId });
+      return res.json({ status: 'ok', session_id: sessionId, action: 'archived' });
+    } else if (action === 'unarchive') {
+      await flagRef.delete();
+      log.info('C360 session unarchived', { sessionId });
+      return res.json({ status: 'ok', session_id: sessionId, action: 'unarchived' });
+    } else {
+      return res.status(400).json({ error: 'action must be "archive" or "unarchive"' });
+    }
+  } catch (e) {
+    log.error('C360 session flag update failed', { error: e.message });
+    return res.status(500).json({ error: 'Failed to update session flag' });
   }
 });
 
