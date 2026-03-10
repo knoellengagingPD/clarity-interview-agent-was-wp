@@ -666,17 +666,20 @@ app.get('/fmp/admin/participants', requireAccessKey, async (req, res) => {
     const participants = await Promise.all(
       participantsSnap.docs.map(async doc => {
         const d = doc.data();
-        const checkinsSnap = await doc.ref.collection('checkins').orderBy('completed_at', 'asc').get();
+        const checkinsSnap = await doc.ref.collection('checkins').get();
 
-        const checkinHistory = checkinsSnap.docs.map(c => {
-          const cd = c.data();
-          return {
-            checkin_id: c.id,
-            checkin_number: cd.checkin_number,
-            completed_at: cd.completed_at,
-            goal_progress: cd.goal_progress || [],
-          };
-        });
+        const checkinHistory = checkinsSnap.docs
+          .map(c => {
+            const cd = c.data();
+            return {
+              checkin_id: c.id,
+              checkin_number: cd.checkin_number,
+              // Support both old field name (checkin_date) and new (completed_at)
+              completed_at: cd.completed_at || cd.checkin_date || null,
+              goal_progress: cd.goal_progress || [],
+            };
+          })
+          .sort((a, b) => (a.completed_at || '').localeCompare(b.completed_at || ''));
 
         // Last check-in ratings: map goal_id → rating for most recent check-in
         let lastCheckinRatings = null;
@@ -1572,11 +1575,32 @@ app.get('/fmp/participant/:code/goals', requireAccessKey, async (req, res) => {
       .filter(p => rawGoals[p.id])
       .map(p => ({ goal_id: p.id, pillar: p.label, text: rawGoals[p.id] }));
 
+    // Fetch the most recent check-in so the ready screen can show previous ratings
+    let last_checkin_ratings = null;
+    const checkinsCompleted = participant.checkins_completed || 0;
+    if (checkinsCompleted > 0) {
+      const ciSnap = await snap.docs[0].ref.collection('checkins').get();
+      if (!ciSnap.empty) {
+        const sorted = ciSnap.docs
+          .map(c => c.data())
+          .sort((a, b) => {
+            const aDate = a.completed_at || a.checkin_date || '';
+            const bDate = b.completed_at || b.checkin_date || '';
+            return bDate.localeCompare(aDate); // descending — most recent first
+          });
+        last_checkin_ratings = {};
+        (sorted[0].goal_progress || []).forEach(gp => {
+          last_checkin_ratings[gp.goal_id] = gp.rating;
+        });
+      }
+    }
+
     return res.json({
       return_code: normalizedCode,
       email: participant.email,
       goals,
-      checkins_completed: participant.checkins_completed || 0,
+      checkins_completed: checkinsCompleted,
+      last_checkin_ratings,
     });
   } catch (e) {
     log.error('FMP goals fetch failed', { error: e.message });
@@ -1635,7 +1659,7 @@ app.post('/fmp/checkin/:code', requireAccessKey, async (req, res) => {
     const checkinDoc = {
       return_code: normalizedCode,
       checkin_number: num,
-      checkin_date: new Date().toISOString(),
+      completed_at: new Date().toISOString(),
       goal_progress: normalizedProgress,
       status: 'complete',
     };
@@ -1663,6 +1687,109 @@ app.post('/fmp/checkin/:code', requireAccessKey, async (req, res) => {
     });
 
     log.info('FMP check-in saved', { code: normalizedCode, checkin_number: num, goalCount: normalizedProgress.length });
+
+    // Send check-in completion email (non-blocking — never fail the save)
+    const participantEmail = participant.email;
+    if (participantEmail && process.env.RESEND_API_KEY) {
+      const PILLAR_META_EMAIL = [
+        { id: 'family',  label: '🏡 Family' },
+        { id: 'friends', label: '🤝 Friends & Community' },
+        { id: 'work',    label: '💼 Meaningful Work' },
+        { id: 'faith',   label: '✨ Faith & Transcendence' },
+      ];
+      const RATING_LABELS_EMAIL = {
+        1: { label: 'Not Yet Started', color: '#dc2626' },
+        2: { label: 'In Progress',     color: '#d97706' },
+        3: { label: 'Almost Complete', color: '#16a34a' },
+        4: { label: 'Fully Achieved',  color: '#7c3aed' },
+      };
+      const ordinalLabel = ['1st', '2nd', '3rd', '4th'][num - 1] || `#${num}`;
+      const goalRows = normalizedProgress.map(gp => {
+        const pillarMeta = PILLAR_META_EMAIL.find(p => p.id === gp.goal_id);
+        const pillarLabel = pillarMeta ? pillarMeta.label : gp.goal_id;
+        const ratingMeta = RATING_LABELS_EMAIL[gp.rating] || { label: `Rating ${gp.rating}`, color: '#57534e' };
+        const goalText = gp.updated_goal || (participant.goals || {})[gp.goal_id] || '';
+        const winsHtml = gp.wins ? `<p style="margin:6px 0 0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;color:#57534e;line-height:1.6;"><strong style="color:#16a34a;">Wins:</strong> ${gp.wins}</p>` : '';
+        const obstaclesHtml = gp.obstacles ? `<p style="margin:4px 0 0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;color:#57534e;line-height:1.6;"><strong style="color:#d97706;">Challenges:</strong> ${gp.obstacles}</p>` : '';
+        const updatedHtml = gp.updated_goal ? `<p style="margin:4px 0 0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#7c3aed;line-height:1.6;"><em>Goal updated this session</em></p>` : '';
+        return `<tr><td style="padding:18px 24px;border-bottom:1px solid #fde68a;">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap;">
+            <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:700;color:#d97706;letter-spacing:0.1em;text-transform:uppercase;">${pillarLabel}</p>
+            <span style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:800;color:${ratingMeta.color};background:rgba(0,0,0,0.05);padding:2px 10px;border-radius:20px;">${gp.rating}/4 · ${ratingMeta.label}</span>
+          </div>
+          <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:14px;color:#1c1917;line-height:1.7;font-weight:600;">${goalText}</p>
+          ${winsHtml}${obstaclesHtml}${updatedHtml}
+        </td></tr>`;
+      }).join('');
+
+      const dateStr = new Date().toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'short' });
+      const checkinEmailHtml = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#fff7ed;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#fff7ed;padding:40px 20px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 4px 32px rgba(245,158,11,0.12);">
+        <tr>
+          <td style="background:linear-gradient(135deg,#f59e0b,#d97706);padding:40px 48px;">
+            <p style="margin:0 0 6px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:700;color:rgba(255,255,255,0.75);letter-spacing:0.14em;text-transform:uppercase;">Find My Purpose &middot; Check-In ${ordinalLabel}</p>
+            <h1 style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:26px;font-weight:800;color:#ffffff;">Check-In Complete!</h1>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:40px 48px;">
+            <p style="margin:0 0 28px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;color:#57534e;line-height:1.8;">
+              You've completed your ${ordinalLabel} check-in — that's <strong style="color:#92400e;">${newCount} of 4</strong> done. Here's where you stand on each of your goals.
+            </p>
+            <table width="100%" cellpadding="0" cellspacing="0" style="background:linear-gradient(135deg,#fff7ed,#fffbeb);border-radius:16px;overflow:hidden;border:1px solid #fde68a;margin-bottom:28px;">
+              ${goalRows}
+            </table>
+            <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:14px;color:#57534e;line-height:1.8;">
+              Keep going — every check-in is a step toward the life you described. <strong style="color:#92400e;">You're doing the work that matters.</strong>
+            </p>
+            <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;padding-top:20px;border-top:1px solid #fde68a;">
+              <tr>
+                <td style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#a8a29e;">
+                  Return code: <span style="font-weight:700;color:#d97706;">${normalizedCode}</span> &nbsp;&middot;&nbsp; ${dateStr}
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#fff7ed;padding:20px 48px;border-top:1px solid #fde68a;">
+            <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#a8a29e;">Find My Purpose &middot; Clarity 360 &mdash; Engaging Online</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+      // Fire-and-forget email sends
+      fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from: 'Find My Purpose <onboarding@resend.dev>',
+          to: [participantEmail],
+          subject: `Check-In ${ordinalLabel} Complete — Your Progress`,
+          html: checkinEmailHtml,
+        }),
+      }).catch(e => log.warn('FMP check-in participant email failed', { error: e.message }));
+
+      fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from: 'Find My Purpose <onboarding@resend.dev>',
+          to: ['knoell@engagingonline.net'],
+          reply_to: participantEmail,
+          subject: `FMP Check-In ${ordinalLabel} — ${participantEmail}`,
+          html: checkinEmailHtml,
+        }),
+      }).catch(e => log.warn('FMP check-in admin copy failed', { error: e.message }));
+    }
+
     return res.status(201).json({ status: 'ok', checkin_number: num, checkins_completed: newCount });
   } catch (e) {
     log.error('FMP check-in save failed', { error: e.message });
