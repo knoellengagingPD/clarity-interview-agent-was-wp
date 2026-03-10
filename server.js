@@ -197,7 +197,7 @@ const VALID_SECTIONS = new Set([
 ]);
 
 const VALID_ROLES = new Set([
-  'student', 'parent', 'staff', 'administrator', 'superintendent',
+  'student', 'parent', 'staff', 'teacher', 'administrator', 'superintendent',
   'adult', 'young_adult',
   'unknown',
 ]);
@@ -492,14 +492,18 @@ app.get('/admin/sessions', requireAccessKey, async (req, res) => {
 
     let query = db.collection('responses');
     if (section) query = query.where('section', '==', section);
-    if (start) query = query.where('ts', '>=', new Date(start).toISOString());
-    if (end) {
-      const endDate = new Date(end);
-      endDate.setDate(endDate.getDate() + 1);
-      query = query.where('ts', '<=', endDate.toISOString());
-    }
+    // Date filtering is done in memory below to avoid Firestore composite index requirements.
+    // Firestore requires a composite index for section + ts range queries.
     const snapshot = await query.get();
-    const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+    const startIso = start ? new Date(start).toISOString() : null;
+    const endIso = end ? (() => { const d = new Date(end); d.setDate(d.getDate() + 1); return d.toISOString(); })() : null;
+    const docs = snapshot.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(doc => {
+        if (startIso && doc.ts && doc.ts < startIso) return false;
+        if (endIso && doc.ts && doc.ts > endIso) return false;
+        return true;
+      });
     const sessionMap = {};
     for (const doc of docs) {
       const sid = doc.session_id || 'unknown';
@@ -575,17 +579,20 @@ app.get('/fmp/admin/sessions', requireAccessKey, async (req, res) => {
   if (!fmpDb) return res.status(503).json({ error: 'Find My Purpose Firestore not available' });
   try {
     const { section = 'find_my_purpose', start, end, client_id } = req.query;
-    let query = fmpDb.collection('responses').where('section', '==', section);
-    if (start) query = query.where('ts', '>=', new Date(start).toISOString());
-    if (end) {
-      const endDate = new Date(end);
-      endDate.setDate(endDate.getDate() + 1);
-      query = query.where('ts', '<=', endDate.toISOString());
-    }
-    if (client_id) query = query.where('client_id', '==', client_id);
-
+    // Single-field query only; date range and client_id filtered in memory
+    // to avoid Firestore composite index requirements.
+    const query = fmpDb.collection('responses').where('section', '==', section);
     const snapshot = await query.get();
-    const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+    const startIso = start ? new Date(start).toISOString() : null;
+    const endIso = end ? (() => { const d = new Date(end); d.setDate(d.getDate() + 1); return d.toISOString(); })() : null;
+    const docs = snapshot.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(doc => {
+        if (client_id && doc.client_id !== client_id) return false;
+        if (startIso && doc.ts && doc.ts < startIso) return false;
+        if (endIso && doc.ts && doc.ts > endIso) return false;
+        return true;
+      });
     const sessionMap = {};
     for (const doc of docs) {
       const sid = doc.session_id || 'unknown';
@@ -2197,8 +2204,8 @@ app.post('/school-climate/tokens', requireAccessKey, async (req, res) => {
     if (!school_id || typeof school_id !== 'string') {
       return res.status(400).json({ error: 'school_id is required' });
     }
-    if (!district || typeof district !== 'string') {
-      return res.status(400).json({ error: 'district is required' });
+    if (district && typeof district !== 'string') {
+      return res.status(400).json({ error: 'district must be a string' });
     }
 
     const validRoles = ['students', 'teachers', 'staff', 'parents'];
@@ -2226,7 +2233,7 @@ app.post('/school-climate/tokens', requireAccessKey, async (req, res) => {
       token,
       school_name: school_name.trim(),
       school_id: school_id.trim(),
-      district: district.trim(),
+      district: (district || '').trim(),
       role,
       is_test: is_test === true,
       status: 'active',
@@ -2263,22 +2270,24 @@ app.get('/school-climate/sessions', requireAccessKey, async (req, res) => {
       ? [`school_climate_${role}`]
       : validRoles.map(r => `school_climate_${r}`);
 
-    // Query each section separately so we avoid composite-index requirements
-    // (section + school_id + ts range would need a composite index per section)
+    // Query each section separately using only a single-field where clause to avoid
+    // Firestore composite index requirements (section + school_id + ts would need indexes).
+    // school_id and date range are filtered in memory below.
+    const startIso = start_date ? new Date(start_date).toISOString() : null;
+    const endIso = end_date ? (() => { const d = new Date(end_date); d.setDate(d.getDate() + 1); return d.toISOString(); })() : null;
     const allDocs = [];
     await Promise.all(sectionsToQuery.map(async (section) => {
-      let q = db.collection('responses')
-        .where('section', '==', section)
-        .where('school_id', '==', school_id);
-      if (start_date) q = q.where('ts', '>=', new Date(start_date).toISOString());
-      if (end_date) {
-        const ed = new Date(end_date);
-        ed.setDate(ed.getDate() + 1);
-        q = q.where('ts', '<=', ed.toISOString());
-      }
+      const q = db.collection('responses').where('section', '==', section);
       try {
         const snap = await q.get();
-        snap.docs.forEach(d => allDocs.push({ id: d.id, ...d.data() }));
+        snap.docs.forEach(d => {
+          const data = d.data();
+          // Filter school_id and date range in memory
+          if (data.school_id !== school_id) return;
+          if (startIso && data.ts && data.ts < startIso) return;
+          if (endIso && data.ts && data.ts > endIso) return;
+          allDocs.push({ id: d.id, ...data });
+        });
       } catch (qErr) {
         log.warn('Climate section query failed', { section, error: qErr.message });
       }
@@ -2288,11 +2297,13 @@ app.get('/school-climate/sessions', requireAccessKey, async (req, res) => {
     let testTokenSet = new Set();
     if (shouldHideTest) {
       try {
+        // Single-field query to avoid composite index requirement; filter is_test in memory
         const testSnap = await db.collection('climate_tokens')
           .where('school_id', '==', school_id)
-          .where('is_test', '==', true)
           .get();
-        testSnap.docs.forEach(d => testTokenSet.add(d.data().token));
+        testSnap.docs.forEach(d => {
+          if (d.data().is_test === true) testTokenSet.add(d.data().token);
+        });
       } catch (e) {
         log.warn('Failed to fetch test tokens for filtering', { error: e.message });
       }
@@ -2301,11 +2312,13 @@ app.get('/school-climate/sessions', requireAccessKey, async (req, res) => {
     let archivedSessionSet = new Set();
     if (!shouldShowArchived) {
       try {
+        // Single-field query to avoid composite index requirement; filter status in memory
         const archSnap = await db.collection('climate_session_flags')
           .where('school_id', '==', school_id)
-          .where('status', '==', 'archived')
           .get();
-        archSnap.docs.forEach(d => archivedSessionSet.add(d.data().session_id));
+        archSnap.docs.forEach(d => {
+          if (d.data().status === 'archived') archivedSessionSet.add(d.data().session_id);
+        });
       } catch (e) {
         log.warn('Failed to fetch archived sessions for filtering', { error: e.message });
       }
