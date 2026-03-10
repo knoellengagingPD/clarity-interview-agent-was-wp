@@ -5,5 +5,11 @@
   ],
   "routes": [
     { "src": "/(.*)", "dest": "server.js" }
+  ],
+  "crons": [
+    {
+      "path": "/fmp/send-checkin-reminder",
+      "schedule": "0 8 * * *"
+    }
   ]
 }

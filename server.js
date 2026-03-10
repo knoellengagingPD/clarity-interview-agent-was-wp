@@ -1458,6 +1458,486 @@ app.post('/fmp/session2-email', requireAccessKey, async (req, res) => {
   }
 });
 
+// ─── FMP: Get Participant Goals (Session 3 — check-in) ───────────────────────
+// GET /fmp/participant/:code/goals
+// Returns the participant's saved SMART goals as a normalised array.
+app.get('/fmp/participant/:code/goals', requireAccessKey, async (req, res) => {
+  if (!fmpDb) return res.status(503).json({ error: 'Find My Purpose Firestore not available' });
+  const normalizedCode = (req.params.code || '').toUpperCase().trim();
+  if (!normalizedCode) return res.status(400).json({ error: 'Return code is required' });
+
+  try {
+    const snap = await fmpDb.collection('participants')
+      .where('return_code', '==', normalizedCode)
+      .limit(1)
+      .get();
+
+    if (snap.empty) return res.status(404).json({ error: 'Participant not found' });
+
+    const participant = snap.docs[0].data();
+    if (participant.status !== 'session_2_complete' && participant.status !== 'checkin_in_progress') {
+      return res.status(409).json({ error: 'Session 2 must be completed before accessing goals for check-in' });
+    }
+
+    const rawGoals = participant.goals || {};
+    const PILLAR_META = [
+      { id: 'family',  label: 'Family' },
+      { id: 'friends', label: 'Friends & Community' },
+      { id: 'work',    label: 'Meaningful Work' },
+      { id: 'faith',   label: 'Faith & Transcendence' },
+    ];
+
+    const goals = PILLAR_META
+      .filter(p => rawGoals[p.id])
+      .map(p => ({ goal_id: p.id, pillar: p.label, text: rawGoals[p.id] }));
+
+    return res.json({
+      return_code: normalizedCode,
+      email: participant.email,
+      goals,
+      checkins_completed: participant.checkins_completed || 0,
+    });
+  } catch (e) {
+    log.error('FMP goals fetch failed', { error: e.message });
+    return res.status(500).json({ error: 'Failed to fetch goals' });
+  }
+});
+
+// ─── FMP: Save Check-In (Session 3) ──────────────────────────────────────────
+// POST /fmp/checkin/:code
+// Body: { checkin_number (1–4), goal_progress: [{ goal_id, rating, wins, obstacles, updated_goal }] }
+// Stores a check-in sub-document under the participant and increments their checkins_completed counter.
+app.post('/fmp/checkin/:code', requireAccessKey, async (req, res) => {
+  if (!fmpDb) return res.status(503).json({ error: 'Find My Purpose Firestore not available' });
+  const normalizedCode = (req.params.code || '').toUpperCase().trim();
+  const { checkin_number, goal_progress } = req.body;
+
+  if (!normalizedCode) return res.status(400).json({ error: 'Return code is required' });
+
+  const num = parseInt(checkin_number, 10);
+  if (!num || num < 1 || num > 4) return res.status(400).json({ error: 'checkin_number must be 1, 2, 3, or 4' });
+
+  if (!goal_progress || !Array.isArray(goal_progress) || goal_progress.length === 0) {
+    return res.status(400).json({ error: 'goal_progress array is required' });
+  }
+
+  // Validate each goal_progress entry
+  for (const entry of goal_progress) {
+    if (!entry.goal_id || typeof entry.goal_id !== 'string') {
+      return res.status(400).json({ error: 'Each goal_progress entry must have a goal_id' });
+    }
+    const rating = parseInt(entry.rating, 10);
+    if (!rating || rating < 1 || rating > 4) {
+      return res.status(400).json({ error: `goal_progress entry for ${entry.goal_id}: rating must be 1–4` });
+    }
+  }
+
+  try {
+    const snap = await fmpDb.collection('participants')
+      .where('return_code', '==', normalizedCode)
+      .limit(1)
+      .get();
+
+    if (snap.empty) return res.status(404).json({ error: 'Participant not found' });
+
+    const participantRef = snap.docs[0].ref;
+    const participant = snap.docs[0].data();
+
+    const normalizedProgress = goal_progress.map(entry => ({
+      goal_id: entry.goal_id,
+      rating: parseInt(entry.rating, 10),
+      wins: (entry.wins || '').substring(0, 1000),
+      obstacles: (entry.obstacles || '').substring(0, 1000),
+      ...(entry.updated_goal ? { updated_goal: entry.updated_goal.substring(0, 500) } : {}),
+    }));
+
+    const checkinDoc = {
+      return_code: normalizedCode,
+      checkin_number: num,
+      checkin_date: new Date().toISOString(),
+      goal_progress: normalizedProgress,
+      status: 'complete',
+    };
+
+    // Store as a sub-document under the participant
+    await participantRef.collection('checkins').add(checkinDoc);
+
+    // Increment the checkins_completed counter on the parent document
+    const newCount = (participant.checkins_completed || 0) + 1;
+    await participantRef.update({
+      checkins_completed: newCount,
+      last_checkin_at: new Date().toISOString(),
+      status: 'checkin_in_progress',
+      // If any goal was updated, merge the updated text back into participant.goals
+      ...(normalizedProgress.some(e => e.updated_goal) && {
+        goals: {
+          ...(participant.goals || {}),
+          ...Object.fromEntries(
+            normalizedProgress
+              .filter(e => e.updated_goal)
+              .map(e => [e.goal_id, e.updated_goal])
+          ),
+        },
+      }),
+    });
+
+    log.info('FMP check-in saved', { code: normalizedCode, checkin_number: num, goalCount: normalizedProgress.length });
+    return res.status(201).json({ status: 'ok', checkin_number: num, checkins_completed: newCount });
+  } catch (e) {
+    log.error('FMP check-in save failed', { error: e.message });
+    return res.status(500).json({ error: 'Failed to save check-in' });
+  }
+});
+
+// ─── FMP: Schedule Check-In Reminders (called after Session 2 completes) ─────
+// POST /fmp/schedule-checkins/:code
+// Creates a checkin_schedule document in Firestore and sends the participant
+// an immediate confirmation email listing their four scheduled check-in dates.
+app.post('/fmp/schedule-checkins/:code', requireAccessKey, async (req, res) => {
+  if (!fmpDb) return res.status(503).json({ error: 'Find My Purpose Firestore not available' });
+  if (!process.env.RESEND_API_KEY) return res.status(500).json({ error: 'Email service not configured' });
+
+  const normalizedCode = (req.params.code || '').toUpperCase().trim();
+  if (!normalizedCode) return res.status(400).json({ error: 'Return code is required' });
+
+  try {
+    const snap = await fmpDb.collection('participants')
+      .where('return_code', '==', normalizedCode)
+      .limit(1)
+      .get();
+
+    if (snap.empty) return res.status(404).json({ error: 'Participant not found' });
+
+    const participant = snap.docs[0].data();
+    const email = participant.email;
+    const rawGoals = participant.goals || {};
+
+    // Calculate the four check-in dates (14, 30, 45, 60 days from now)
+    const now = new Date();
+    const offsets = [14, 30, 45, 60];
+    const scheduledDates = offsets.map((days, idx) => {
+      const d = new Date(now);
+      d.setDate(d.getDate() + days);
+      return {
+        checkin_number: idx + 1,
+        scheduled_date: d.toISOString().split('T')[0],  // YYYY-MM-DD
+        sent: false,
+      };
+    });
+
+    // Keyed by checkin_number string for easy Firestore field updates
+    const reminders = {};
+    for (const r of scheduledDates) {
+      reminders[String(r.checkin_number)] = {
+        scheduled_date: r.scheduled_date,
+        sent: false,
+      };
+    }
+
+    // 1. Write checkin_schedule document
+    const existingSchedule = await fmpDb.collection('checkin_schedule')
+      .where('return_code', '==', normalizedCode)
+      .limit(1)
+      .get();
+
+    if (!existingSchedule.empty) {
+      // Update existing schedule if it already exists
+      await existingSchedule.docs[0].ref.update({ reminders, updated_at: now.toISOString() });
+    } else {
+      await fmpDb.collection('checkin_schedule').add({
+        return_code: normalizedCode,
+        email,
+        goals: rawGoals,
+        reminders,
+        created_at: now.toISOString(),
+      });
+    }
+
+    log.info('FMP check-in schedule created', { code: normalizedCode, dates: scheduledDates.map(d => d.scheduled_date) });
+
+    // 2. Build confirmation email
+    const PILLAR_META = [
+      { id: 'family',  label: '🏡 Family',                 color: '#d97706' },
+      { id: 'friends', label: '🤝 Friends & Community',     color: '#d97706' },
+      { id: 'work',    label: '💼 Meaningful Work',          color: '#d97706' },
+      { id: 'faith',   label: '✨ Faith & Transcendence',    color: '#d97706' },
+    ];
+
+    const goalRows = PILLAR_META
+      .filter(p => rawGoals[p.id])
+      .map(p => `
+        <tr>
+          <td style="padding:14px 24px;border-bottom:1px solid #fde68a;">
+            <p style="margin:0 0 4px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:700;color:${p.color};letter-spacing:0.1em;text-transform:uppercase;">${p.label}</p>
+            <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:14px;color:#1c1917;line-height:1.6;">${rawGoals[p.id]}</p>
+          </td>
+        </tr>`)
+      .join('');
+
+    const dateRows = scheduledDates.map(d => {
+      const dateObj = new Date(d.scheduled_date + 'T12:00:00Z');
+      const formatted = dateObj.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+      return `
+        <tr>
+          <td style="padding:10px 0;border-bottom:1px solid #fde68a;">
+            <span style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;font-weight:700;color:#d97706;">Check-In ${d.checkin_number}</span>
+            <span style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;color:#57534e;margin-left:12px;">${formatted}</span>
+          </td>
+        </tr>`;
+    }).join('');
+
+    const checkinLink = `https://findmypurpose.clarity360hq.com/checkin?code=${normalizedCode}`;
+
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#fff7ed;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#fff7ed;padding:40px 20px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 4px 32px rgba(245,158,11,0.12);">
+        <tr>
+          <td style="background:linear-gradient(135deg,#f59e0b,#d97706);padding:40px 48px;">
+            <p style="margin:0 0 6px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:700;color:rgba(255,255,255,0.75);letter-spacing:0.14em;text-transform:uppercase;">Find My Purpose &middot; Clarity 360</p>
+            <h1 style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:26px;font-weight:800;color:#ffffff;">Your Check-In Schedule is Set!</h1>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:40px 48px;">
+            <p style="margin:0 0 24px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;color:#57534e;line-height:1.8;">
+              You've completed Session 2 and your SMART goals are locked in. Over the next 60 days, you'll receive four check-in reminders to help you track your progress and celebrate your growth.
+            </p>
+
+            <p style="margin:0 0 12px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:700;color:#d97706;letter-spacing:0.1em;text-transform:uppercase;">Your Check-In Dates</p>
+            <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
+              ${dateRows}
+            </table>
+
+            <p style="margin:0 0 12px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:700;color:#d97706;letter-spacing:0.1em;text-transform:uppercase;">Your SMART Goals</p>
+            <table width="100%" cellpadding="0" cellspacing="0" style="background:linear-gradient(135deg,#fff7ed,#fffbeb);border-radius:16px;overflow:hidden;border:1px solid #fde68a;margin-bottom:28px;">
+              ${goalRows}
+            </table>
+
+            <p style="margin:0 0 24px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:14px;color:#57534e;line-height:1.7;">
+              When you receive a reminder, click the button below to complete your check-in — it only takes a few minutes.
+            </p>
+
+            <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
+              <tr>
+                <td align="center">
+                  <a href="${checkinLink}" style="display:inline-block;background:linear-gradient(135deg,#f59e0b,#d97706);color:#ffffff;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;padding:14px 36px;border-radius:12px;">Start a Check-In</a>
+                </td>
+              </tr>
+            </table>
+
+            <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;padding-top:20px;border-top:1px solid #fde68a;">
+              <tr>
+                <td style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#a8a29e;">
+                  Return code: <span style="font-weight:700;color:#d97706;">${normalizedCode}</span>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#fff7ed;padding:20px 48px;border-top:1px solid #fde68a;">
+            <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#a8a29e;">Find My Purpose &middot; Clarity 360 &mdash; Engaging Online</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+    // 3. Send confirmation email to participant
+    const emailRes = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: 'Find My Purpose <onboarding@resend.dev>',
+        to: [email],
+        subject: 'Your Find My Purpose Check-In Schedule',
+        html,
+      }),
+    });
+    const emailData = await emailRes.json();
+    if (!emailRes.ok) {
+      log.error('FMP schedule confirmation email failed', { status: emailRes.status, body: JSON.stringify(emailData) });
+      // Don't fail the request — schedule is saved even if email fails
+    } else {
+      log.info('FMP schedule confirmation email sent', { email, code: normalizedCode, emailId: emailData.id });
+    }
+
+    return res.json({
+      status: 'ok',
+      return_code: normalizedCode,
+      scheduled_dates: scheduledDates.map(d => ({ checkin_number: d.checkin_number, date: d.scheduled_date })),
+    });
+  } catch (e) {
+    log.error('FMP schedule-checkins failed', { error: e.message });
+    return res.status(500).json({ error: 'Failed to schedule check-ins' });
+  }
+});
+
+// ─── FMP: Send Check-In Reminder (Vercel cron job) ────────────────────────────
+// POST /fmp/send-checkin-reminder
+// Called daily at 08:00 by a Vercel cron job (see vercel.json).
+// Vercel passes Authorization: Bearer <CRON_SECRET> in the request header.
+// Finds all checkin_schedule documents with a reminder due today (sent=false),
+// sends a reminder email to each participant, and marks the reminder as sent.
+app.post('/fmp/send-checkin-reminder', async (req, res) => {
+  // Verify Vercel cron secret
+  const cronSecret = process.env.CRON_SECRET;
+  if (cronSecret) {
+    const authHeader = req.headers['authorization'] || '';
+    if (authHeader !== `Bearer ${cronSecret}`) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+  }
+
+  if (!fmpDb) return res.status(503).json({ error: 'Find My Purpose Firestore not available' });
+  if (!process.env.RESEND_API_KEY) return res.status(500).json({ error: 'Email service not configured' });
+
+  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+  log.info('FMP check-in reminder cron running', { date: today });
+
+  try {
+    const scheduleSnap = await fmpDb.collection('checkin_schedule').get();
+    if (scheduleSnap.empty) {
+      return res.json({ status: 'ok', sent: 0, skipped: 0, message: 'No schedules found' });
+    }
+
+    let sent = 0;
+    let skipped = 0;
+
+    for (const schedDoc of scheduleSnap.docs) {
+      const schedule = schedDoc.data();
+      const reminders = schedule.reminders || {};
+
+      for (const [numStr, reminder] of Object.entries(reminders)) {
+        if (reminder.sent || reminder.scheduled_date !== today) continue;
+
+        const checkinNum = parseInt(numStr, 10);
+        const email = schedule.email;
+        const returnCode = schedule.return_code;
+        const rawGoals = schedule.goals || {};
+
+        // Build goal list HTML for the email
+        const PILLAR_META = [
+          { id: 'family',  label: '🏡 Family' },
+          { id: 'friends', label: '🤝 Friends & Community' },
+          { id: 'work',    label: '💼 Meaningful Work' },
+          { id: 'faith',   label: '✨ Faith & Transcendence' },
+        ];
+
+        const goalItems = PILLAR_META
+          .filter(p => rawGoals[p.id])
+          .map(p => `
+            <tr>
+              <td style="padding:14px 24px;border-bottom:1px solid #fde68a;">
+                <p style="margin:0 0 4px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:700;color:#d97706;letter-spacing:0.1em;text-transform:uppercase;">${p.label}</p>
+                <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:14px;color:#1c1917;line-height:1.6;">${rawGoals[p.id]}</p>
+              </td>
+            </tr>`)
+          .join('');
+
+        const checkinLink = `https://findmypurpose.clarity360hq.com/checkin?code=${returnCode}`;
+        const ordinal = ['First', 'Second', 'Third', 'Fourth'][checkinNum - 1] || `#${checkinNum}`;
+
+        const html = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#fff7ed;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#fff7ed;padding:40px 20px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 4px 32px rgba(245,158,11,0.12);">
+        <tr>
+          <td style="background:linear-gradient(135deg,#f59e0b,#d97706);padding:40px 48px;">
+            <p style="margin:0 0 6px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:700;color:rgba(255,255,255,0.75);letter-spacing:0.14em;text-transform:uppercase;">Find My Purpose &middot; Clarity 360</p>
+            <h1 style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:26px;font-weight:800;color:#ffffff;">Time for Your ${ordinal} Check-In!</h1>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:40px 48px;">
+            <p style="margin:0 0 24px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;color:#57534e;line-height:1.8;">
+              It's time to pause and reflect on the progress you've been making toward your SMART goals. This check-in is your chance to celebrate your wins, name your obstacles, and keep your momentum strong.
+            </p>
+
+            <p style="margin:0 0 12px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:700;color:#d97706;letter-spacing:0.1em;text-transform:uppercase;">Your SMART Goals</p>
+            <table width="100%" cellpadding="0" cellspacing="0" style="background:linear-gradient(135deg,#fff7ed,#fffbeb);border-radius:16px;overflow:hidden;border:1px solid #fde68a;margin-bottom:28px;">
+              ${goalItems}
+            </table>
+
+            <p style="margin:0 0 24px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:14px;color:#57534e;line-height:1.7;">
+              Your check-in only takes a few minutes. Click the button below and enter your return code when prompted — then reflect on how each goal is going.
+            </p>
+
+            <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:32px;">
+              <tr>
+                <td align="center">
+                  <a href="${checkinLink}" style="display:inline-block;background:linear-gradient(135deg,#f59e0b,#d97706);color:#ffffff;font-family:'Helvetica Neue',Arial,sans-serif;font-size:16px;font-weight:700;text-decoration:none;padding:16px 40px;border-radius:12px;">Complete My ${ordinal} Check-In</a>
+                </td>
+              </tr>
+            </table>
+
+            <p style="margin:0 0 8px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;color:#a8a29e;">
+              Or copy and paste this link into your browser:<br>
+              <span style="color:#d97706;">${checkinLink}</span>
+            </p>
+
+            <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;padding-top:20px;border-top:1px solid #fde68a;">
+              <tr>
+                <td style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#a8a29e;">
+                  Return code: <span style="font-weight:700;color:#d97706;">${returnCode}</span> &nbsp;&middot;&nbsp; Check-In ${checkinNum} of 4
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#fff7ed;padding:20px 48px;border-top:1px solid #fde68a;">
+            <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#a8a29e;">Find My Purpose &middot; Clarity 360 &mdash; Engaging Online</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+        try {
+          const emailRes = await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              from: 'Find My Purpose <onboarding@resend.dev>',
+              to: [email],
+              subject: `Your Find My Purpose ${ordinal} Check-In is Ready`,
+              html,
+            }),
+          });
+          const emailData = await emailRes.json();
+
+          if (!emailRes.ok) {
+            log.error('FMP reminder email failed', { email, checkinNum, status: emailRes.status, body: JSON.stringify(emailData) });
+            skipped++;
+          } else {
+            // Mark reminder as sent in Firestore
+            await schedDoc.ref.update({ [`reminders.${numStr}.sent`]: true, [`reminders.${numStr}.sent_at`]: new Date().toISOString() });
+            log.info('FMP reminder sent', { email, checkinNum, code: returnCode, emailId: emailData.id });
+            sent++;
+          }
+        } catch (emailErr) {
+          log.error('FMP reminder send error', { email, checkinNum, error: emailErr.message });
+          skipped++;
+        }
+      }
+    }
+
+    log.info('FMP check-in reminder cron complete', { date: today, sent, skipped });
+    return res.json({ status: 'ok', date: today, sent, skipped });
+  } catch (e) {
+    log.error('FMP send-checkin-reminder cron failed', { error: e.message });
+    return res.status(500).json({ error: 'Cron job failed' });
+  }
+});
+
 // ─── School Climate: Token Lookup ─────────────────────────────────────────────
 // GET /school-climate/token/:token
 // Public endpoint — no access key required (called by the interview page before auth)
