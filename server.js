@@ -562,7 +562,8 @@ app.post('/admin/generate-report', requireAccessKey, async (req, res) => {
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-5',
-        max_tokens: 4000,
+        max_tokens: 8192,
+        system: 'You are a professional report writer for Clarity 360. Do not reference Clarity 360 as a third-party vendor or suggest contacting Clarity 360 — you ARE Clarity 360 generating this report for internal use.',
         messages: [{ role: 'user', content: prompt }],
       }),
     });
@@ -631,7 +632,8 @@ app.post('/fmp/admin/generate-report', requireAccessKey, async (req, res) => {
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-5',
-        max_tokens: 5000,
+        max_tokens: 8192,
+        system: 'You are a professional report writer for Clarity 360. Do not reference Clarity 360 as a third-party vendor or suggest contacting Clarity 360 — you ARE Clarity 360 generating this report for internal use.',
         messages: [{ role: 'user', content: prompt }],
       }),
     });
