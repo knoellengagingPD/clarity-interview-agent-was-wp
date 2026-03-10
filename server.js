@@ -636,6 +636,87 @@ app.post('/fmp/admin/generate-report', requireAccessKey, async (req, res) => {
   }
 });
 
+// ─── FMP Admin: Participants ──────────────────────────────────────────────────
+// GET /fmp/admin/participants — all participants with check-in data
+app.get('/fmp/admin/participants', requireAccessKey, async (req, res) => {
+  if (!fmpDb) return res.status(503).json({ error: 'Find My Purpose Firestore not available' });
+  try {
+    // Fetch participants and checkin_schedule in parallel
+    const [participantsSnap, scheduleSnap] = await Promise.all([
+      fmpDb.collection('participants').orderBy('created_at', 'desc').get(),
+      fmpDb.collection('checkin_schedule').get(),
+    ]);
+
+    // Build a map: participant_id → next_reminder_date
+    const scheduleByCode = {};
+    scheduleSnap.docs.forEach(doc => {
+      const d = doc.data();
+      const code = d.return_code;
+      if (!code) return;
+      const reminders = d.reminders || {};
+      const today = new Date().toISOString().split('T')[0];
+      // Find the earliest unsent reminder that is today or in the future
+      const pending = Object.values(reminders)
+        .filter(r => r.scheduled_date >= today && !r.sent)
+        .sort((a, b) => a.scheduled_date.localeCompare(b.scheduled_date));
+      scheduleByCode[code] = pending.length > 0 ? pending[0].scheduled_date : null;
+    });
+
+    // For each participant fetch their checkins subcollection in parallel
+    const participants = await Promise.all(
+      participantsSnap.docs.map(async doc => {
+        const d = doc.data();
+        const checkinsSnap = await doc.ref.collection('checkins').orderBy('completed_at', 'asc').get();
+
+        const checkinHistory = checkinsSnap.docs.map(c => {
+          const cd = c.data();
+          return {
+            checkin_id: c.id,
+            checkin_number: cd.checkin_number,
+            completed_at: cd.completed_at,
+            goal_progress: cd.goal_progress || [],
+          };
+        });
+
+        // Last check-in ratings: map goal_id → rating for most recent check-in
+        let lastCheckinRatings = null;
+        if (checkinHistory.length > 0) {
+          const latest = checkinHistory[checkinHistory.length - 1];
+          lastCheckinRatings = {};
+          (latest.goal_progress || []).forEach(gp => {
+            lastCheckinRatings[gp.goal_id] = gp.rating;
+          });
+        }
+
+        // Normalize goals
+        const goalsRaw = d.goals || {};
+        const goals = ['family', 'friends', 'work', 'faith']
+          .filter(pillar => goalsRaw[pillar])
+          .map(pillar => ({ goal_id: pillar, pillar, text: goalsRaw[pillar] }));
+
+        return {
+          id: doc.id,
+          email: d.email || '',
+          return_code: d.return_code || '',
+          created_at: d.created_at || null,
+          session2_completed_at: d.session2_completed_at || null,
+          status: d.status || 'session_1_complete',
+          checkins_completed: d.checkins_completed || 0,
+          next_reminder_date: scheduleByCode[d.return_code] || null,
+          goals,
+          last_checkin_ratings: lastCheckinRatings,
+          checkin_history: checkinHistory,
+        };
+      })
+    );
+
+    return res.json({ participants, total: participants.length });
+  } catch (e) {
+    log.error('FMP admin participants fetch failed', { error: e.message });
+    return res.status(500).json({ error: 'Failed to fetch participants' });
+  }
+});
+
 // ─── FMP Client Management ────────────────────────────────────────────────────
 
 // GET /fmp/clients — list all clients
