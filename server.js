@@ -21,6 +21,27 @@ const log = {
   error: (msg, meta = {}) => console.error(JSON.stringify({ level: 'error', msg, ...meta, ts: new Date().toISOString() })),
 };
 
+// ─── In-memory response cache (reduces Firestore reads on hot endpoints) ─────
+// Keyed by string, values expire after TTL. Single-instance safe (Vercel/Railway).
+const _responseCache = new Map();
+function cacheGet(key) {
+  const entry = _responseCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) { _responseCache.delete(key); return null; }
+  return entry.value;
+}
+function cacheSet(key, value, ttlMs) {
+  _responseCache.set(key, { value, expiresAt: Date.now() + ttlMs });
+}
+/** Evict all cache entries whose key starts with `prefix`. */
+function cacheInvalidatePrefix(prefix) {
+  for (const key of _responseCache.keys()) {
+    if (key.startsWith(prefix)) _responseCache.delete(key);
+  }
+}
+const CACHE_TTL_HEALTH   = 5  * 60 * 1000; //  5 minutes — health endpoint
+const CACHE_TTL_SESSIONS = 2  * 60 * 1000; //  2 minutes — session list endpoints
+
 // ─── Firebase Helper: load service account from env ──────────────────────────
 function loadServiceAccount(prefix = '') {
   const clientEmailKey  = prefix ? `${prefix}_CLIENT_EMAIL`      : 'FIREBASE_CLIENT_EMAIL';
@@ -321,7 +342,15 @@ app.use((req, res, next) => {
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
 // Health check — shows both database statuses and document counts
+// Cached for 5 minutes to avoid triggering Firestore reads on every monitoring ping.
+// Pass ?fresh=1 to bypass the cache (e.g. for manual spot-checks).
 app.get('/health', async (req, res) => {
+  const cacheKey = 'health';
+  if (req.query.fresh !== '1') {
+    const cached = cacheGet(cacheKey);
+    if (cached) return res.json({ ...cached, cached: true });
+  }
+
   const counts = {};
 
   // Count Clarity 360 responses by section
@@ -356,7 +385,7 @@ app.get('/health', async (req, res) => {
     }
   }
 
-  res.json({
+  const payload = {
     status: 'ok',
     databases: {
       clarity360: db ? 'connected' : 'disabled',
@@ -366,7 +395,9 @@ app.get('/health', async (req, res) => {
     },
     counts,
     ts: new Date().toISOString(),
-  });
+  };
+  cacheSet(cacheKey, payload, CACHE_TTL_HEALTH);
+  res.json(payload);
 });
 
 // Session token
@@ -474,6 +505,15 @@ app.post(
         }
       }
 
+      // Invalidate session caches so the next dashboard poll sees fresh data
+      if (section.startsWith('school_climate_')) {
+        cacheInvalidatePrefix('sc_sessions:');
+      } else if (section === 'find_my_purpose' || section === 'find_my_purpose_s2') {
+        cacheInvalidatePrefix('fmp_admin_sessions:');
+      } else {
+        cacheInvalidatePrefix('admin_sessions:');
+      }
+
       return res.json({ status: 'ok' });
     } catch (e) {
       log.error('Firestore write failed', { error: e.message, section, code: e.code });
@@ -489,6 +529,12 @@ app.get('/admin/sessions', requireAccessKey, async (req, res) => {
     const { section, start, end, hide_test, show_archived } = req.query;
     const shouldHideTest = hide_test === 'true';         // only hide test data when explicitly requested
     const shouldShowArchived = show_archived === 'true'; // default: hide archived
+
+    // Cache results for 2 minutes — this endpoint is polled every 30s by the admin dashboard
+    // and each call scans the entire responses collection (N reads per call).
+    const cacheKey = `admin_sessions:${JSON.stringify({ section, start, end, hide_test, show_archived })}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) return res.json({ ...cached, cached: true });
 
     let query = db.collection('responses');
     if (section) query = query.where('section', '==', section);
@@ -535,7 +581,9 @@ app.get('/admin/sessions', requireAccessKey, async (req, res) => {
     if (!shouldShowArchived) sessions = sessions.filter(s => !archivedSessionIds.has(s.session_id));
     if (shouldHideTest) sessions = sessions.filter(s => !testSessionIds.has(s.session_id));
 
-    return res.json({ sessions, total: sessions.length });
+    const result = { sessions, total: sessions.length };
+    cacheSet(cacheKey, result, CACHE_TTL_SESSIONS);
+    return res.json(result);
   } catch (e) {
     console.error('[admin/sessions] Firestore error:', e);
     return res.status(500).json({
@@ -580,6 +628,12 @@ app.get('/fmp/admin/sessions', requireAccessKey, async (req, res) => {
   if (!fmpDb) return res.status(503).json({ error: 'Find My Purpose Firestore not available' });
   try {
     const { section = 'find_my_purpose', start, end, client_id } = req.query;
+
+    // Cache for 2 minutes — polled every 30s by the admin dashboard
+    const cacheKey = `fmp_admin_sessions:${JSON.stringify({ section, start, end, client_id })}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) return res.json({ ...cached, cached: true });
+
     // Single-field query only; date range and client_id filtered in memory
     // to avoid Firestore composite index requirements.
     const query = fmpDb.collection('responses').where('section', '==', section);
@@ -609,7 +663,9 @@ app.get('/fmp/admin/sessions', requireAccessKey, async (req, res) => {
         ts: doc.ts,
       });
     }
-    return res.json({ sessions: Object.values(sessionMap), total: Object.keys(sessionMap).length });
+    const result = { sessions: Object.values(sessionMap), total: Object.keys(sessionMap).length };
+    cacheSet(cacheKey, result, CACHE_TTL_SESSIONS);
+    return res.json(result);
   } catch (e) {
     log.error('FMP sessions fetch failed', { error: e.message });
     return res.status(500).json({ error: 'Failed to fetch FMP sessions' });
@@ -2267,6 +2323,11 @@ app.get('/school-climate/sessions', requireAccessKey, async (req, res) => {
       return res.status(400).json({ error: 'school_id query param is required' });
     }
 
+    // Cache for 2 minutes — each call scans 4 full sections of the responses collection
+    const cacheKey = `sc_sessions:${JSON.stringify({ school_id, role, start_date, end_date, hide_test, show_archived })}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) return res.json({ ...cached, cached: true });
+
     const validRoles = ['students', 'teachers', 'staff', 'parents'];
     const sectionsToQuery = (role && validRoles.includes(role))
       ? [`school_climate_${role}`]
@@ -2403,11 +2464,13 @@ app.get('/school-climate/sessions', requireAccessKey, async (req, res) => {
       };
     }
 
-    return res.json({
+    const result = {
       school_id,
       roles_queried: sectionsToQuery.map(s => s.replace('school_climate_', '')),
       data,
-    });
+    };
+    cacheSet(cacheKey, result, CACHE_TTL_SESSIONS);
+    return res.json(result);
   } catch (e) {
     log.error('Climate sessions fetch failed', { error: e.message });
     return res.status(500).json({
@@ -2431,10 +2494,12 @@ app.patch('/school-climate/sessions/:sessionId', requireAccessKey, async (req, r
     const flagRef = db.collection('climate_session_flags').doc(sessionId);
     if (action === 'archive') {
       await flagRef.set({ session_id: sessionId, school_id, status: 'archived', created_at: new Date().toISOString() });
+      cacheInvalidatePrefix('sc_sessions:');
       log.info('Climate session archived', { sessionId, school_id });
       return res.json({ status: 'ok', session_id: sessionId, action: 'archived' });
     } else if (action === 'unarchive') {
       await flagRef.delete();
+      cacheInvalidatePrefix('sc_sessions:');
       log.info('Climate session unarchived', { sessionId, school_id });
       return res.json({ status: 'ok', session_id: sessionId, action: 'unarchived' });
     } else {
@@ -2460,10 +2525,12 @@ app.patch('/admin/sessions/:sessionId', requireAccessKey, async (req, res) => {
     const flagRef = db.collection('clarity360_session_flags').doc(sessionId);
     if (action === 'archive') {
       await flagRef.set({ session_id: sessionId, status: 'archived', created_at: new Date().toISOString() }, { merge: true });
+      cacheInvalidatePrefix('admin_sessions:');
       log.info('C360 session archived', { sessionId });
       return res.json({ status: 'ok', session_id: sessionId, action: 'archived' });
     } else if (action === 'unarchive') {
       await flagRef.delete();
+      cacheInvalidatePrefix('admin_sessions:');
       log.info('C360 session unarchived', { sessionId });
       return res.json({ status: 'ok', session_id: sessionId, action: 'unarchived' });
     } else {
