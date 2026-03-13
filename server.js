@@ -1185,7 +1185,7 @@ app.post('/fmp/register-participant', requireAccessKey, async (req, res) => {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        from: 'Find My Purpose <onboarding@resend.dev>',
+        from: process.env.FMP_FROM_EMAIL || 'Find My Purpose <onboarding@resend.dev>',
         to: [email],
         subject: `Your Find My Purpose Return Code: ${return_code}`,
         html,
@@ -1335,7 +1335,7 @@ Write in second person ("you", "your"). Be warm, specific, and meaningful. Refer
       method: 'POST',
       headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        from: 'Find My Purpose <onboarding@resend.dev>',
+        from: process.env.FMP_FROM_EMAIL || 'Find My Purpose <onboarding@resend.dev>',
         to: [email],
         subject: 'Your Find My Purpose Reflection Report',
         html: makeHtml(true),
@@ -1349,7 +1349,7 @@ Write in second person ("you", "your"). Be warm, specific, and meaningful. Refer
       method: 'POST',
       headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        from: 'Find My Purpose <onboarding@resend.dev>',
+        from: process.env.FMP_FROM_EMAIL || 'Find My Purpose <onboarding@resend.dev>',
         to: ['knoell@engagingonline.net'],
         reply_to: email,
         subject: `FMP Personal Report — ${email}`,
@@ -1574,7 +1574,7 @@ app.post('/fmp/session2-email', requireAccessKey, async (req, res) => {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        from: 'Find My Purpose <onboarding@resend.dev>',
+        from: process.env.FMP_FROM_EMAIL || 'Find My Purpose <onboarding@resend.dev>',
         to: [email],
         subject: 'Your Find My Purpose Session 2 Goals',
         html,
@@ -1591,7 +1591,7 @@ app.post('/fmp/session2-email', requireAccessKey, async (req, res) => {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        from: 'Find My Purpose <onboarding@resend.dev>',
+        from: process.env.FMP_FROM_EMAIL || 'Find My Purpose <onboarding@resend.dev>',
         to: ['knoell@engagingonline.net'],
         reply_to: email,
         subject: `FMP Session 2 Goals — ${email}`,
@@ -1835,7 +1835,7 @@ app.post('/fmp/checkin/:code', requireAccessKey, async (req, res) => {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          from: 'Find My Purpose <onboarding@resend.dev>',
+          from: process.env.FMP_FROM_EMAIL || 'Find My Purpose <onboarding@resend.dev>',
           to: [participantEmail],
           subject: `Check-In ${ordinalLabel} Complete — Your Progress`,
           html: checkinEmailHtml,
@@ -1846,7 +1846,7 @@ app.post('/fmp/checkin/:code', requireAccessKey, async (req, res) => {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          from: 'Find My Purpose <onboarding@resend.dev>',
+          from: process.env.FMP_FROM_EMAIL || 'Find My Purpose <onboarding@resend.dev>',
           to: ['knoell@engagingonline.net'],
           reply_to: participantEmail,
           subject: `FMP Check-In ${ordinalLabel} — ${participantEmail}`,
@@ -2025,7 +2025,7 @@ app.post('/fmp/schedule-checkins/:code', requireAccessKey, async (req, res) => {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        from: 'Find My Purpose <onboarding@resend.dev>',
+        from: process.env.FMP_FROM_EMAIL || 'Find My Purpose <onboarding@resend.dev>',
         to: [email],
         subject: 'Your Find My Purpose Check-In Schedule',
         html,
@@ -2179,7 +2179,7 @@ app.post('/fmp/send-checkin-reminder', async (req, res) => {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              from: 'Find My Purpose <onboarding@resend.dev>',
+              from: process.env.FMP_FROM_EMAIL || 'Find My Purpose <onboarding@resend.dev>',
               to: [email],
               subject: `Your Find My Purpose ${ordinal} Check-In is Ready`,
               html,
