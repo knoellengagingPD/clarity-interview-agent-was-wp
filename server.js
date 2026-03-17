@@ -13,6 +13,7 @@ import fetch from 'node-fetch';
 import fs from 'fs';
 import path from 'path';
 import admin from 'firebase-admin';
+import Stripe from 'stripe';
 
 // ─── Structured Logger ────────────────────────────────────────────────────────
 const log = {
@@ -47,6 +48,14 @@ const CACHE_TTL_SESSIONS = 2  * 60 * 1000; //  2 minutes — session list endpoi
 // Both findmypurpose.clarity360hq.com and engagingpurpose.com point to the
 // same Vercel deployment; set whichever is the canonical public URL.
 const FMP_APP_URL = process.env.FMP_APP_URL || 'https://engagingpurpose.com';
+
+// ─── Stripe Client ────────────────────────────────────────────────────────────
+// Requires STRIPE_SECRET_KEY in environment variables.
+// STRIPE_FMP_PRICE_ID — the Price ID for the Find My Purpose one-time payment.
+// STRIPE_WEBHOOK_SECRET — signing secret from the Stripe dashboard webhook config.
+const stripe = process.env.STRIPE_SECRET_KEY
+  ? new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2024-12-18.acacia' })
+  : null;
 
 // ─── Firebase Helper: load service account from env ──────────────────────────
 function loadServiceAccount(prefix = '') {
@@ -336,7 +345,14 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json({ limit: '50kb' }));
+// The `verify` callback stashes the raw Buffer on req.rawBody so the Stripe
+// webhook handler can verify the signature before the body has been parsed.
+app.use(express.json({
+  limit: '50kb',
+  verify: (req, _res, buf) => {
+    if (req.path === '/api/stripe-webhook') req.rawBody = buf;
+  },
+}));
 app.use(express.static('public'));
 
 app.use((req, res, next) => {
@@ -2555,6 +2571,115 @@ app.use((req, res) => {
   res.status(404).json({ error: 'Not found' });
 });
 
+// ─── Stripe Payment Routes ─────────────────────────────────────────────────────
+
+/**
+ * POST /api/fmp-create-checkout
+ *
+ * Creates a Stripe Checkout session for the Find My Purpose one-time payment
+ * and records a pending payment document in Firestore so the webhook can match
+ * it later.
+ *
+ * Body (all optional):
+ *   { fmpCode?: string }   — participant return code, if already known pre-payment
+ *
+ * Response:
+ *   { url: string }        — the Stripe-hosted Checkout URL; redirect the user there
+ *
+ * Required env vars: STRIPE_SECRET_KEY, STRIPE_FMP_PRICE_ID
+ */
+app.post('/api/fmp-create-checkout', async (req, res) => {
+  if (!stripe)  return res.status(503).json({ error: 'Stripe not configured — set STRIPE_SECRET_KEY' });
+  if (!fmpDb)   return res.status(503).json({ error: 'Database not available' });
+  if (!process.env.STRIPE_FMP_PRICE_ID) {
+    return res.status(503).json({ error: 'STRIPE_FMP_PRICE_ID env var not set' });
+  }
+
+  const { fmpCode = '' } = req.body ?? {};
+
+  try {
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      line_items: [{ price: process.env.STRIPE_FMP_PRICE_ID, quantity: 1 }],
+      success_url: `${FMP_APP_URL}/start?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url:  FMP_APP_URL,
+      metadata:    { fmpCode },
+    });
+
+    // Record the pending payment — keyed by Stripe session ID so the webhook
+    // can locate and update it without a collection scan.
+    await fmpDb.collection('fmp_pending_payments').doc(session.id).set({
+      sessionId: session.id,
+      fmpCode,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      paid: false,
+    });
+
+    log.info('FMP checkout session created', { sessionId: session.id, fmpCode });
+    return res.json({ url: session.url });
+  } catch (err) {
+    log.error('fmp-create-checkout error', { error: err.message });
+    return res.status(500).json({ error: 'Failed to create checkout session' });
+  }
+});
+
+/**
+ * POST /api/stripe-webhook
+ *
+ * Receives Stripe webhook events and marks the matching fmp_pending_payments
+ * document as paid when a checkout.session.completed event arrives.
+ *
+ * Stripe sends the raw JSON body; we verify the signature before processing.
+ * The express.json() verify callback above captures req.rawBody for this route.
+ *
+ * Required env vars: STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET
+ */
+app.post('/api/stripe-webhook', async (req, res) => {
+  if (!stripe) return res.status(503).json({ error: 'Stripe not configured' });
+
+  const sig           = req.headers['stripe-signature'];
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+  if (!webhookSecret) {
+    log.warn('STRIPE_WEBHOOK_SECRET not set — rejecting webhook');
+    return res.status(500).json({ error: 'Webhook secret not configured' });
+  }
+  if (!sig) {
+    return res.status(400).json({ error: 'Missing stripe-signature header' });
+  }
+
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.rawBody, sig, webhookSecret);
+  } catch (err) {
+    log.warn('Stripe webhook signature verification failed', { error: err.message });
+    return res.status(400).json({ error: `Webhook signature invalid: ${err.message}` });
+  }
+
+  if (event.type === 'checkout.session.completed') {
+    const session   = event.data.object;
+    const sessionId = session.id;
+
+    try {
+      await fmpDb.collection('fmp_pending_payments').doc(sessionId).set(
+        {
+          paid:   true,
+          paidAt: admin.firestore.FieldValue.serverTimestamp(),
+          amount: 27,
+        },
+        { merge: true },
+      );
+      log.info('FMP payment marked paid', { sessionId, amount: 27 });
+    } catch (err) {
+      log.error('Failed to update fmp_pending_payments', { sessionId, error: err.message });
+      return res.status(500).json({ error: 'Failed to record payment' });
+    }
+  }
+
+  return res.json({ received: true });
+});
+
+// ─── Error Handler ────────────────────────────────────────────────────────────
 app.use((err, req, res, _next) => {
   log.error('Unhandled error', { error: err.message, stack: err.stack });
   res.status(500).json({ error: 'Internal server error' });
