@@ -42,6 +42,12 @@ function cacheInvalidatePrefix(prefix) {
 const CACHE_TTL_HEALTH   = 5  * 60 * 1000; //  5 minutes — health endpoint
 const CACHE_TTL_SESSIONS = 2  * 60 * 1000; //  2 minutes — session list endpoints
 
+// ─── App URLs ─────────────────────────────────────────────────────────────────
+// FMP_APP_URL must be set in the server's environment variables.
+// Both findmypurpose.clarity360hq.com and engagingpurpose.com point to the
+// same Vercel deployment; set whichever is the canonical public URL.
+const FMP_APP_URL = process.env.FMP_APP_URL || 'https://engagingpurpose.com';
+
 // ─── Firebase Helper: load service account from env ──────────────────────────
 function loadServiceAccount(prefix = '') {
   const clientEmailKey  = prefix ? `${prefix}_CLIENT_EMAIL`      : 'FIREBASE_CLIENT_EMAIL';
@@ -303,10 +309,12 @@ app.use((req, res, next) => {
     'https://find-my-purpose.vercel.app',
     'https://clarity360hq.com',
     'https://www.clarity360hq.com',
+    'https://engagingpurpose.com',
+    'https://www.engagingpurpose.com',
     // Allow any *.vercel.app subdomain for preview deployments
   ];
   const origin = req.headers.origin || '';
-  if (allowed.includes(origin) || origin.endsWith('.vercel.app') || origin.endsWith('.ngrok.io') || origin.endsWith('.clarity360hq.com')) {
+  if (allowed.includes(origin) || origin.endsWith('.vercel.app') || origin.endsWith('.ngrok.io') || origin.endsWith('.clarity360hq.com') || origin.endsWith('.engagingpurpose.com')) {
     res.setHeader('Access-Control-Allow-Origin', origin);
   }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
@@ -1159,7 +1167,7 @@ app.post('/fmp/register-participant', requireAccessKey, async (req, res) => {
               </tr>
             </table>
             <p style="margin:0 0 8px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:14px;color:#57534e;line-height:1.7;">
-              You can return to <a href="https://findmypurpose.clarity360hq.com" style="color:#d97706;font-weight:700;">findmypurpose.clarity360hq.com</a> and enter this code when you begin your next session to pick up where you left off.
+              You can return to <a href="${FMP_APP_URL}" style="color:#d97706;font-weight:700;">${FMP_APP_URL.replace(/^https?:\/\//, '')}</a> and enter this code when you begin your next session to pick up where you left off.
             </p>
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;padding-top:20px;border-top:1px solid #fde68a;">
               <tr>
@@ -1959,7 +1967,7 @@ app.post('/fmp/schedule-checkins/:code', requireAccessKey, async (req, res) => {
         </tr>`;
     }).join('');
 
-    const checkinLink = `https://findmypurpose.clarity360hq.com/checkin?code=${normalizedCode}`;
+    const checkinLink = `${FMP_APP_URL}/checkin?code=${normalizedCode}`;
 
     const html = `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"></head>
@@ -2112,7 +2120,7 @@ app.post('/fmp/send-checkin-reminder', async (req, res) => {
             </tr>`)
           .join('');
 
-        const checkinLink = `https://findmypurpose.clarity360hq.com/checkin?code=${returnCode}`;
+        const checkinLink = `${FMP_APP_URL}/checkin?code=${returnCode}`;
         const ordinal = ['First', 'Second', 'Third', 'Fourth'][checkinNum - 1] || `#${checkinNum}`;
 
         const html = `<!DOCTYPE html>
