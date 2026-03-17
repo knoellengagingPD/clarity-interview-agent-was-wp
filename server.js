@@ -2566,11 +2566,6 @@ app.patch('/admin/sessions/:sessionId', requireAccessKey, async (req, res) => {
   }
 });
 
-// ─── 404 & Error Handlers ─────────────────────────────────────────────────────
-app.use((req, res) => {
-  res.status(404).json({ error: 'Not found' });
-});
-
 // ─── Stripe Payment Routes ─────────────────────────────────────────────────────
 
 /**
@@ -2696,6 +2691,11 @@ app.get('/api/fmp-verify-payment', async (req, res) => {
     log.error('Failed to verify FMP payment', { session_id, error: err.message });
     return res.status(500).json({ error: 'Failed to verify payment' });
   }
+});
+
+// ─── 404 & Error Handlers ─────────────────────────────────────────────────────
+app.use((req, res) => {
+  res.status(404).json({ error: 'Not found' });
 });
 
 // ─── Error Handler ────────────────────────────────────────────────────────────
