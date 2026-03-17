@@ -2679,6 +2679,25 @@ app.post('/api/stripe-webhook', async (req, res) => {
   return res.json({ received: true });
 });
 
+// ─── FMP Payment Verification ─────────────────────────────────────────────────
+app.get('/api/fmp-verify-payment', async (req, res) => {
+  if (!fmpDb) return res.status(503).json({ error: 'Database not available' });
+
+  const { session_id } = req.query;
+  if (!session_id || typeof session_id !== 'string') {
+    return res.status(400).json({ error: 'session_id query param required' });
+  }
+
+  try {
+    const doc = await fmpDb.collection('fmp_pending_payments').doc(session_id).get();
+    if (!doc.exists) return res.json({ paid: false });
+    return res.json({ paid: !!doc.data().paid });
+  } catch (err) {
+    log.error('Failed to verify FMP payment', { session_id, error: err.message });
+    return res.status(500).json({ error: 'Failed to verify payment' });
+  }
+});
+
 // ─── Error Handler ────────────────────────────────────────────────────────────
 app.use((err, req, res, _next) => {
   log.error('Unhandled error', { error: err.message, stack: err.stack });
