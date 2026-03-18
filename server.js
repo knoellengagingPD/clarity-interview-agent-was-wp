@@ -1909,8 +1909,16 @@ app.post('/fmp/schedule-checkins/:code', requireAccessKey, async (req, res) => {
     const email = participant.email;
     const rawGoals = participant.goals || {};
 
-    // Calculate the four check-in dates (14, 30, 45, 60 days from now)
-    const now = new Date();
+    // Anchor check-in dates to Session 2 completion, not the time of this API
+    // call. session2_completed_at is written by PATCH /goals immediately before
+    // this route is called, so it should always be present. Fall back to now
+    // only as a safety net (e.g. manual admin reschedule with no saved timestamp).
+    const baseDate = participant.session2_completed_at
+      ? new Date(participant.session2_completed_at)
+      : new Date();
+
+    // Calculate the four check-in dates (14, 30, 45, 60 days from Session 2 completion)
+    const now = baseDate;
     const offsets = [14, 30, 45, 60];
     const scheduledDates = offsets.map((days, idx) => {
       const d = new Date(now);
