@@ -2613,8 +2613,8 @@ app.post('/api/fmp-create-checkout', async (req, res) => {
     log.info('FMP checkout session created', { sessionId: session.id, fmpCode });
     return res.json({ url: session.url });
   } catch (err) {
-    log.error('fmp-create-checkout error', { error: err.message });
-    return res.status(500).json({ error: 'Failed to create checkout session' });
+    console.error('fmp-create-checkout error', err);
+    return res.status(500).json({ error: err.message, stack: err.stack });
   }
 });
 
