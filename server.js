@@ -2144,7 +2144,9 @@ app.post('/fmp/send-checkin-reminder', async (req, res) => {
             </tr>`)
           .join('');
 
-        const checkinLink = `${FMP_APP_URL}/checkin?code=${returnCode}`;
+        const checkinDays = [14, 30, 45, 60];
+        const dayOffset = checkinDays[checkinNum - 1] ?? 14;
+        const checkinLink = `${FMP_APP_URL}/session3?code=${returnCode}&day=${dayOffset}`;
         const ordinal = ['First', 'Second', 'Third', 'Fourth'][checkinNum - 1] || `#${checkinNum}`;
 
         const html = `<!DOCTYPE html>
