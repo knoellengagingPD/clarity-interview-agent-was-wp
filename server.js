@@ -2701,6 +2701,67 @@ app.get('/api/fmp-verify-payment', async (req, res) => {
   }
 });
 
+// ─── FMP Save Check-in (Voice Transcript) ─────────────────────────────────────
+app.post('/fmp/save-checkin', requireAccessKey, async (req, res) => {
+  if (!fmpDb) return res.status(503).json({ error: 'Find My Purpose Firestore not available' });
+
+  const { returnCode, day, responses, completedAt } = req.body;
+
+  if (!returnCode || typeof returnCode !== 'string') {
+    return res.status(400).json({ error: 'returnCode is required' });
+  }
+  const normalizedCode = returnCode.toUpperCase().trim();
+
+  const validDays = [14, 30, 45, 60];
+  const dayNum = parseInt(day, 10);
+  if (!validDays.includes(dayNum)) {
+    return res.status(400).json({ error: 'day must be 14, 30, 45, or 60' });
+  }
+
+  if (!responses || !Array.isArray(responses) || responses.length === 0) {
+    return res.status(400).json({ error: 'responses array is required' });
+  }
+
+  try {
+    const snap = await fmpDb.collection('participants')
+      .where('return_code', '==', normalizedCode)
+      .limit(1)
+      .get();
+
+    if (snap.empty) return res.status(404).json({ error: 'Participant not found' });
+
+    const participantRef = snap.docs[0].ref;
+    const participant = snap.docs[0].data();
+
+    const checkinDoc = {
+      return_code: normalizedCode,
+      day: dayNum,
+      type: 'voice_checkin',
+      responses: responses.map(r => ({
+        question: (r.question || '').substring(0, 500),
+        answer: (r.answer || '').substring(0, 3000),
+      })),
+      completed_at: completedAt || new Date().toISOString(),
+      status: 'complete',
+    };
+
+    await participantRef.collection('checkins').add(checkinDoc);
+
+    const newCount = (participant.checkins_completed || 0) + 1;
+    await participantRef.update({
+      checkins_completed: newCount,
+      last_checkin_at: checkinDoc.completed_at,
+    });
+
+    log.info('FMP voice check-in saved', { code: normalizedCode, day: dayNum });
+
+    return res.json({ success: true, checkins_completed: newCount });
+  } catch (err) {
+    console.error('fmp/save-checkin error', err);
+    return res.status(500).json({ error: err.message, stack: err.stack });
+  }
+});
+
 // ─── 404 & Error Handlers ─────────────────────────────────────────────────────
 app.use((req, res) => {
   res.status(404).json({ error: 'Not found' });
