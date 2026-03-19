@@ -2898,8 +2898,11 @@ app.get('/api/renewedtude/verify-session', async (req, res) => {
               </tr>
             </table>
             <p style="margin:0 0 8px;font-size:13px;color:#666;text-align:center;">Or copy this link into your browser:</p>
-            <p style="margin:0 0 28px;font-size:13px;color:#888;text-align:center;word-break:break-all;">
+            <p style="margin:0 0 20px;font-size:13px;color:#888;text-align:center;word-break:break-all;">
               <a href="${accessLink}" style="color:#e8a09a;text-decoration:none;">${accessLink}</a>
+            </p>
+            <p style="margin:0 0 28px;font-size:14px;color:#d4d4d4;text-align:center;">
+              Course password: <strong style="color:#ffffff;letter-spacing:0.05em;">GetRenewed2026</strong>
             </p>
             <hr style="border:none;border-top:1px solid #333;margin:0 0 24px;" />
             <p style="margin:0;font-size:13px;color:#666;line-height:1.6;">
