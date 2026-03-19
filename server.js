@@ -320,6 +320,8 @@ app.use((req, res, next) => {
     'https://www.clarity360hq.com',
     'https://engagingpurpose.com',
     'https://www.engagingpurpose.com',
+    'https://renewedtude.engagingpd.com',
+    'https://www.renewedtude.engagingpd.com',
     // Allow any *.vercel.app subdomain for preview deployments
   ];
   const origin = req.headers.origin || '';
@@ -2761,6 +2763,228 @@ app.post('/fmp/save-checkin', requireAccessKey, async (req, res) => {
   } catch (err) {
     console.error('fmp/save-checkin error', err);
     return res.status(500).json({ error: err.message, stack: err.stack });
+  }
+});
+
+// ─── Renewed 'Tude Routes ─────────────────────────────────────────────────────
+
+/**
+ * POST /api/renewedtude/create-checkout-session
+ *
+ * Creates a Stripe checkout session for the Renewed 'Tude course ($27).
+ * Returns { url } — the frontend redirects the browser to this URL.
+ */
+app.post('/api/renewedtude/create-checkout-session', async (req, res) => {
+  if (!stripe) return res.status(503).json({ error: 'Stripe not configured — set STRIPE_SECRET_KEY' });
+
+  try {
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      payment_method_types: ['card'],
+      line_items: [
+        {
+          price_data: {
+            currency: 'usd',
+            unit_amount: 2700,
+            product_data: {
+              name: "Renewed 'Tude — Teacher Resilience Course",
+            },
+          },
+          quantity: 1,
+        },
+      ],
+      success_url: 'https://renewedtude.engagingpd.com/success?session_id={CHECKOUT_SESSION_ID}',
+      cancel_url:  'https://renewedtude.engagingpd.com',
+    });
+
+    log.info('Renewed Tude checkout session created', { sessionId: session.id });
+    return res.json({ url: session.url });
+  } catch (err) {
+    log.error('renewedtude/create-checkout-session error', { error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/renewedtude/verify-session?session_id=XXX
+ *
+ * Verifies a completed Stripe checkout session.
+ * If payment_status === 'paid':
+ *   - Generates a unique RT-XXXXXX token
+ *   - Stores it in Firestore `renewedtude_tokens` collection (main clarity-360 db)
+ *   - Sends a Resend email with the course access link
+ * Returns { success: true, email } or { success: false }
+ */
+app.get('/api/renewedtude/verify-session', async (req, res) => {
+  if (!stripe) return res.status(503).json({ error: 'Stripe not configured' });
+  if (!db)     return res.status(503).json({ error: 'Database not available' });
+
+  const { session_id } = req.query;
+  if (!session_id || typeof session_id !== 'string') {
+    return res.status(400).json({ error: 'session_id query param required' });
+  }
+
+  try {
+    const session = await stripe.checkout.sessions.retrieve(session_id);
+
+    if (session.payment_status !== 'paid') {
+      log.warn('Renewed Tude verify-session: not paid', { session_id });
+      return res.json({ success: false });
+    }
+
+    const purchaserEmail = session.customer_details?.email ?? '';
+
+    // Check if we've already issued a token for this session to avoid duplicates
+    const existing = await db.collection('renewedtude_tokens')
+      .where('stripeSessionId', '==', session_id)
+      .limit(1)
+      .get();
+
+    let token;
+    if (!existing.empty) {
+      // Already processed — re-use the existing token
+      token = existing.docs[0].data().token;
+      log.info('Renewed Tude verify-session: re-using existing token', { session_id, token });
+    } else {
+      // Generate a new unique token: RT- + 6 random uppercase alphanumeric chars
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+      const rand = Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+      token = `RT-${rand}`;
+
+      await db.collection('renewedtude_tokens').add({
+        token,
+        email: purchaserEmail,
+        stripeSessionId: session_id,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        used: false,
+      });
+
+      log.info('Renewed Tude token created', { token, email: purchaserEmail });
+
+      // Send access email via Resend
+      if (process.env.RESEND_API_KEY && purchaserEmail) {
+        const accessLink = `https://renewedtude.engagingpd.com/course?token=${token}`;
+        const html = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background-color:#1a1a1a;font-family:'Helvetica Neue',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#1a1a1a;padding:40px 20px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#222222;border-radius:12px;overflow:hidden;border:1px solid #333;">
+        <!-- Header -->
+        <tr>
+          <td style="background:#C0392B;padding:28px 32px;text-align:center;">
+            <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;font-weight:600;letter-spacing:0.15em;text-transform:uppercase;color:rgba(255,255,255,0.8);">Your Course Access</p>
+            <p style="margin:8px 0 0;font-family:Georgia,serif;font-size:38px;font-weight:700;color:#ffffff;line-height:1;">Renewed &lsquo;Tude</p>
+          </td>
+        </tr>
+        <!-- Body -->
+        <tr>
+          <td style="padding:36px 32px;">
+            <p style="margin:0 0 20px;font-size:17px;color:#d4d4d4;line-height:1.7;">
+              Congratulations &mdash; your purchase is confirmed! We&rsquo;re so glad you&rsquo;re here.
+            </p>
+            <p style="margin:0 0 28px;font-size:16px;color:#aaaaaa;line-height:1.7;">
+              Click the button below to access your course. This link is unique to you &mdash; please don&rsquo;t share it.
+            </p>
+            <!-- CTA -->
+            <table cellpadding="0" cellspacing="0" style="margin:0 auto 28px;">
+              <tr>
+                <td style="background:#C0392B;border-radius:8px;text-align:center;">
+                  <a href="${accessLink}" style="display:inline-block;padding:16px 40px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:16px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#ffffff;text-decoration:none;">
+                    Access Your Course
+                  </a>
+                </td>
+              </tr>
+            </table>
+            <p style="margin:0 0 8px;font-size:13px;color:#666;text-align:center;">Or copy this link into your browser:</p>
+            <p style="margin:0 0 28px;font-size:13px;color:#888;text-align:center;word-break:break-all;">
+              <a href="${accessLink}" style="color:#e8a09a;text-decoration:none;">${accessLink}</a>
+            </p>
+            <hr style="border:none;border-top:1px solid #333;margin:0 0 24px;" />
+            <p style="margin:0;font-size:13px;color:#666;line-height:1.6;">
+              Questions? Reply to this email or contact us at
+              <a href="mailto:knoell@engagingpd.com" style="color:#e8a09a;text-decoration:none;">knoell@engagingpd.com</a>.
+            </p>
+          </td>
+        </tr>
+        <!-- Footer -->
+        <tr>
+          <td style="background:#1a1a1a;padding:18px 32px;text-align:center;">
+            <p style="margin:0;font-size:12px;color:#555;">&copy; 2026 Engaging Education Solutions, LLC</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+        try {
+          const emailRes = await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              from: 'Renewed \'Tude <noreply@clarity360hq.com>',
+              to: [purchaserEmail],
+              subject: "Your Renewed 'Tude Access Link",
+              html,
+            }),
+          });
+          const emailData = await emailRes.json();
+          if (!emailRes.ok) {
+            log.warn('Renewed Tude email send failed', { status: emailRes.status, body: JSON.stringify(emailData) });
+          } else {
+            log.info('Renewed Tude access email sent', { email: purchaserEmail, resendId: emailData.id });
+          }
+        } catch (emailErr) {
+          log.warn('Renewed Tude email fetch error', { error: emailErr.message });
+          // Do not fail the request if email fails — token is already stored
+        }
+      }
+    }
+
+    return res.json({ success: true, email: purchaserEmail });
+  } catch (err) {
+    log.error('renewedtude/verify-session error', { error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/renewedtude/verify-token?token=XXX
+ *
+ * Looks up a token in the renewedtude_tokens Firestore collection.
+ * Returns { valid: true } if found, { valid: false } if not.
+ * Does NOT mark the token as used — access is ongoing.
+ */
+app.get('/api/renewedtude/verify-token', async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Database not available' });
+
+  const { token } = req.query;
+  if (!token || typeof token !== 'string') {
+    return res.status(400).json({ error: 'token query param required' });
+  }
+
+  try {
+    const snap = await db.collection('renewedtude_tokens')
+      .where('token', '==', token.trim())
+      .limit(1)
+      .get();
+
+    if (snap.empty) {
+      log.info('Renewed Tude verify-token: not found', { token });
+      return res.json({ valid: false });
+    }
+
+    log.info('Renewed Tude verify-token: valid', { token });
+    return res.json({ valid: true });
+  } catch (err) {
+    log.error('renewedtude/verify-token error', { error: err.message });
+    return res.status(500).json({ error: err.message });
   }
 });
 

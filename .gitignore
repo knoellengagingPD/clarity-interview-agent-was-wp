@@ -20,3 +20,4 @@ yarn-error.log*
 # Vercel
 .vercel/
 firebase-service-account.json
+.env*.local
