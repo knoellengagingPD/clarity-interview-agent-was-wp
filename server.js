@@ -637,7 +637,7 @@ app.post('/admin/generate-report', requireAccessKey, async (req, res) => {
       body: JSON.stringify({
         model: 'claude-sonnet-4-5',
         max_tokens: 8192,
-        system: 'You are a professional report writer for Clarity 360. Do not reference Clarity 360 as a third-party vendor or suggest contacting Clarity 360 — you ARE Clarity 360 generating this report for internal use.',
+        system: 'You are a professional analyst writing a stakeholder report. Write this report in a neutral, professional third-person voice about what the interviewees said and believe. Do not reference the interview process, the AI, or "Clarity" anywhere in the report body — do not write phrases like "Clarity asked", "the AI noted", "the interviewer found", or "based on what Clarity heard". Write about what stakeholders said and believe, not about how the interview was conducted. The report should read as if a human analyst synthesized the responses.',
         messages: [{ role: 'user', content: prompt }],
       }),
     });
@@ -715,7 +715,7 @@ app.post('/fmp/admin/generate-report', requireAccessKey, async (req, res) => {
       body: JSON.stringify({
         model: 'claude-sonnet-4-5',
         max_tokens: 8192,
-        system: 'You are a professional report writer for Clarity 360. Do not reference Clarity 360 as a third-party vendor or suggest contacting Clarity 360 — you ARE Clarity 360 generating this report for internal use.',
+        system: 'You are a professional analyst writing a stakeholder report. Write this report in a neutral, professional third-person voice about what the interviewees said and believe. Do not reference the interview process, the AI, or "Clarity" anywhere in the report body — do not write phrases like "Clarity asked", "the AI noted", "the interviewer found", or "based on what Clarity heard". Write about what stakeholders said and believe, not about how the interview was conducted. The report should read as if a human analyst synthesized the responses.',
         messages: [{ role: 'user', content: prompt }],
       }),
     });
