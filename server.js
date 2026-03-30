@@ -580,7 +580,7 @@ app.get('/admin/sessions', requireAccessKey, async (req, res) => {
     for (const doc of docs) {
       const sid = doc.session_id || 'unknown';
       if (!sessionMap[sid]) sessionMap[sid] = { session_id: sid, turns: [], ts: doc.ts };
-      sessionMap[sid].turns.push({ question_id: doc.question_id, followup_text: doc.followup_text || doc.text || '', ts: doc.ts });
+      sessionMap[sid].turns.push({ question_id: doc.question_id, followup_text: doc.followup_text || doc.text || '', rating: doc.rating !== undefined ? doc.rating : null, ts: doc.ts });
       // Track earliest ts for the session
       if (doc.ts && (!sessionMap[sid].ts || doc.ts < sessionMap[sid].ts)) {
         sessionMap[sid].ts = doc.ts;
@@ -625,7 +625,14 @@ app.post('/admin/generate-report', requireAccessKey, async (req, res) => {
   try {
     const { prompt } = req.body;
     if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+      console.error('[admin/generate-report] Missing or empty prompt. Body keys:', Object.keys(req.body || {}));
       return res.status(400).json({ error: 'prompt is required' });
+    }
+    console.log('[admin/generate-report] Prompt length:', prompt.length, 'chars');
+    console.log('[admin/generate-report] Prompt preview:', prompt.substring(0, 300));
+    // Check for undefined/null placeholders in the prompt (sign of a broken template)
+    if (prompt.includes('undefined') || prompt.includes('null')) {
+      console.error('[admin/generate-report] WARNING: prompt contains "undefined" or "null" — likely a field assembly error on the frontend.');
     }
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -642,9 +649,165 @@ app.post('/admin/generate-report', requireAccessKey, async (req, res) => {
       }),
     });
     const data = await response.json();
+    if (!response.ok) {
+      console.error('[admin/generate-report] Anthropic API returned HTTP', response.status, ':', JSON.stringify(data));
+    } else if (data.type === 'error') {
+      console.error('[admin/generate-report] Anthropic API error object:', JSON.stringify(data.error));
+    } else if (!data.content?.[0]?.text) {
+      console.error('[admin/generate-report] Unexpected response structure (no content[0].text):', JSON.stringify(data).substring(0, 500));
+    } else {
+      console.log('[admin/generate-report] Success — response length:', data.content[0].text.length, 'chars');
+    }
     return res.json(data);
   } catch (e) {
+    console.error('[admin/generate-report] Exception during Anthropic API call:', e.message);
+    console.error('[admin/generate-report] Stack:', e.stack);
     log.error('Report generation failed', { error: e.message });
+    return res.status(500).json({ error: 'Report generation failed' });
+  }
+});
+
+// ─── Admin: Administrator Interview Generate Report (server-side Firestore fetch) ─
+// Unlike /admin/generate-report (which takes a pre-assembled prompt), this route
+// fetches superintendent_interview responses directly from Firestore, assembles
+// the prompt server-side, and calls Claude — so the frontend never has to build
+// the prompt itself.  Accepts optional { session_ids, start, end } filters.
+app.post('/admin/generate-administrator-report', requireAccessKey, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
+  try {
+    const { session_ids, start, end } = req.body;
+    console.log('[admin/generate-administrator-report] Request received — session_ids count:', Array.isArray(session_ids) ? session_ids.length : 'none', 'start:', start || 'none', 'end:', end || 'none');
+
+    // ── 1. Fetch all superintendent_interview responses ─────────────────────────
+    console.log('[admin/generate-administrator-report] Fetching from Firestore: responses where section == superintendent_interview');
+    const snapshot = await db.collection('responses').where('section', '==', 'superintendent_interview').get();
+    console.log('[admin/generate-administrator-report] Firestore returned', snapshot.size, 'raw documents');
+
+    if (snapshot.empty) {
+      console.error('[admin/generate-administrator-report] No superintendent_interview documents in Firestore — check collection name and section value');
+      return res.status(404).json({ error: 'No administrator interview data found in database' });
+    }
+
+    // ── 2. Filter by session_ids / date range ────────────────────────────────────
+    const startIso    = start ? new Date(start).toISOString() : null;
+    const endIso      = end   ? (() => { const d = new Date(end); d.setDate(d.getDate() + 1); return d.toISOString(); })() : null;
+    const sessionIdSet = (Array.isArray(session_ids) && session_ids.length > 0) ? new Set(session_ids) : null;
+
+    const docs = snapshot.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(doc => {
+        if (sessionIdSet && !sessionIdSet.has(doc.session_id)) return false;
+        if (startIso && doc.ts && doc.ts < startIso) return false;
+        if (endIso   && doc.ts && doc.ts > endIso)   return false;
+        return true;
+      });
+
+    console.log('[admin/generate-administrator-report] After filtering:', docs.length, 'documents');
+
+    // ── 3. Diagnose field-name issues before building the prompt ─────────────────
+    if (docs.length > 0) {
+      const sampleFields = Object.keys(docs[0]).filter(k => k !== 'id');
+      console.log('[admin/generate-administrator-report] Sample doc fields:', sampleFields);
+
+      const hasFollowupText = docs.some(d => d.followup_text !== undefined && d.followup_text !== '');
+      const hasText         = docs.some(d => d.text         !== undefined && d.text         !== '');
+      const hasAnswers      = docs.some(d => d.answers      !== undefined);
+      const hasResponse     = docs.some(d => d.response     !== undefined);
+      console.log('[admin/generate-administrator-report] Response-field presence — followup_text:', hasFollowupText, '| text:', hasText, '| answers:', hasAnswers, '| response:', hasResponse);
+
+      if (!hasFollowupText && !hasText && !hasAnswers && !hasResponse) {
+        console.error('[admin/generate-administrator-report] WARNING: no recognised response field in any document — check Firestore field names');
+      }
+    }
+
+    if (docs.length === 0) {
+      console.error('[admin/generate-administrator-report] No documents matched filters — session_ids:', session_ids, '| start:', start, '| end:', end);
+      return res.status(404).json({ error: 'No matching administrator interview responses found' });
+    }
+
+    // ── 4. Group by session ──────────────────────────────────────────────────────
+    const sessionMap = {};
+    for (const doc of docs) {
+      const sid = doc.session_id || 'unknown';
+      if (!sessionMap[sid]) sessionMap[sid] = { session_id: sid, turns: [], ts: doc.ts };
+
+      // Robustly extract response text — try every plausible field name
+      const responseText = doc.followup_text || doc.text || doc.response || doc.answer || '';
+      if (!responseText) {
+        console.warn('[admin/generate-administrator-report] Empty response for doc', doc.id, '— fields present:', Object.keys(doc));
+      }
+
+      sessionMap[sid].turns.push({
+        question_id:  doc.question_id || 'unknown',
+        response:     responseText,
+        ts:           doc.ts || '',
+      });
+
+      if (doc.ts && (!sessionMap[sid].ts || doc.ts < sessionMap[sid].ts)) {
+        sessionMap[sid].ts = doc.ts;
+      }
+    }
+
+    const sessions = Object.values(sessionMap).sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+    console.log('[admin/generate-administrator-report] Assembled', sessions.length, 'sessions for report');
+
+    // ── 5. Assemble prompt ───────────────────────────────────────────────────────
+    const sessionBlocks = sessions.map((s, i) => {
+      const sortedTurns = s.turns.slice().sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+      const turnLines = sortedTurns
+        .map((t, j) => `  Response ${j + 1} (${t.question_id}): ${t.response || '(no response recorded)'}`)
+        .join('\n');
+      return `=== Interview Session ${i + 1} (${s.session_id}) ===\n${turnLines}`;
+    }).join('\n\n');
+
+    const prompt = `The following are ${sessions.length} Administrator Interview session(s) from a superintendent listening tour. Synthesize the responses into a professional stakeholder report.\n\nINTERVIEW SESSIONS:\n${sessionBlocks}\n\nWrite a structured report with these sections:\n1. Executive Summary\n2. Key Themes & Findings\n3. Areas of Strength\n4. Areas for Growth / Improvement\n5. Actionable Recommendations\n\nWrite in a professional, neutral third-person voice. Do not reference the interview format or AI.`;
+
+    console.log('[admin/generate-administrator-report] Prompt length:', prompt.length, 'chars');
+    console.log('[admin/generate-administrator-report] Prompt preview:', prompt.substring(0, 300));
+
+    if (prompt.includes('undefined') || prompt.includes('null')) {
+      console.error('[admin/generate-administrator-report] WARNING: prompt contains "undefined" or "null" — likely a field assembly error');
+    }
+
+    // ── 6. Call Claude Sonnet ────────────────────────────────────────────────────
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-5',
+        max_tokens: 4096,
+        system: 'You are a professional analyst writing a stakeholder report. Write this report in a neutral, professional third-person voice about what the interviewees said and believe. Do not reference the interview process, the AI, or "Clarity" anywhere in the report body — do not write phrases like "Clarity asked", "the AI noted", "the interviewer found", or "based on what Clarity heard". Write about what stakeholders said and believe, not about how the interview was conducted. The report should read as if a human analyst synthesized the responses.',
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error('[admin/generate-administrator-report] Anthropic API returned HTTP', response.status, ':', JSON.stringify(data));
+      return res.status(502).json({ error: 'Report generation failed', detail: data?.error });
+    }
+    if (data.type === 'error') {
+      console.error('[admin/generate-administrator-report] Anthropic API error object:', JSON.stringify(data.error));
+      return res.status(502).json({ error: 'Report generation failed', detail: data.error });
+    }
+    if (!data.content?.[0]?.text) {
+      console.error('[admin/generate-administrator-report] Unexpected response structure (no content[0].text):', JSON.stringify(data).substring(0, 500));
+      return res.status(500).json({ error: 'Unexpected response from Claude API' });
+    }
+
+    console.log('[admin/generate-administrator-report] Success — report length:', data.content[0].text.length, 'chars');
+    // Return in the same shape as /admin/generate-report so the frontend can reuse the same handler
+    return res.json(data);
+
+  } catch (e) {
+    console.error('[admin/generate-administrator-report] Exception:', e.message);
+    console.error('[admin/generate-administrator-report] Stack:', e.stack);
+    log.error('Administrator report generation failed', { error: e.message });
     return res.status(500).json({ error: 'Report generation failed' });
   }
 });
