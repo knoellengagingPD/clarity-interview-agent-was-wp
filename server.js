@@ -667,6 +667,74 @@ app.post('/admin/generate-report', requireAccessKey, async (req, res) => {
   }
 });
 
+// ─── Markdown → HTML helper (for superintendent report emails) ───────────────
+function markdownToHtml(md) {
+  const lines = md.split('\n');
+  const htmlLines = [];
+  let inList = false;
+
+  for (const raw of lines) {
+    const line = raw
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.+?)\*/g, '<em>$1</em>');
+
+    if (/^#### (.+)/.test(line)) {
+      if (inList) { htmlLines.push('</ul>'); inList = false; }
+      htmlLines.push(`<h4 style="font-size:13px;font-weight:800;color:#6d28d9;text-transform:uppercase;letter-spacing:0.05em;margin:18px 0 6px">${line.replace(/^#### /, '')}</h4>`);
+    } else if (/^### (.+)/.test(line)) {
+      if (inList) { htmlLines.push('</ul>'); inList = false; }
+      htmlLines.push(`<h3 style="font-size:15px;font-weight:800;color:#1e1b4b;margin:20px 0 8px">${line.replace(/^### /, '')}</h3>`);
+    } else if (/^## (.+)/.test(line)) {
+      if (inList) { htmlLines.push('</ul>'); inList = false; }
+      htmlLines.push(`<h2 style="font-size:18px;font-weight:800;color:#4338ca;margin:28px 0 10px;padding-bottom:6px;border-bottom:2px solid #e0e7ff">${line.replace(/^## /, '')}</h2>`);
+    } else if (/^# (.+)/.test(line)) {
+      if (inList) { htmlLines.push('</ul>'); inList = false; }
+      htmlLines.push(`<h1 style="font-size:22px;font-weight:800;color:#1e1b4b;margin:0 0 8px">${line.replace(/^# /, '')}</h1>`);
+    } else if (/^[-*] (.+)/.test(line)) {
+      if (!inList) { htmlLines.push('<ul style="margin:8px 0 16px 20px;padding:0">'); inList = true; }
+      htmlLines.push(`<li style="font-size:14px;color:#374151;line-height:1.8;margin-bottom:4px">${line.replace(/^[-*] /, '')}</li>`);
+    } else if (/^---+$/.test(line.trim())) {
+      if (inList) { htmlLines.push('</ul>'); inList = false; }
+      htmlLines.push('<hr style="border:none;border-top:1px solid #e0e7ff;margin:20px 0">');
+    } else if (line.trim() === '') {
+      if (inList) { htmlLines.push('</ul>'); inList = false; }
+      htmlLines.push('');
+    } else {
+      if (inList) { htmlLines.push('</ul>'); inList = false; }
+      htmlLines.push(`<p style="font-size:14px;color:#374151;line-height:1.8;margin:0 0 12px">${line}</p>`);
+    }
+  }
+  if (inList) htmlLines.push('</ul>');
+  return htmlLines.join('\n');
+}
+
+// ─── Admin: Store Superintendent Lead ────────────────────────────────────────
+// Called by the interview page immediately after the email capture form is
+// submitted, before the voice session starts.
+app.post('/admin/store-lead', requireAccessKey, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Firestore not available' });
+  const { session_id, firstName, lastName, email, districtName } = req.body;
+  if (!email || typeof email !== 'string' || !email.includes('@')) {
+    return res.status(400).json({ error: 'Valid email is required' });
+  }
+  try {
+    await db.collection('superintendent_leads').add({
+      session_id: session_id || 'unknown',
+      firstName:  (firstName  || '').trim(),
+      lastName:   (lastName   || '').trim(),
+      email:      email.trim(),
+      districtName: (districtName || '').trim(),
+      converted:  false,
+      createdAt:  new Date().toISOString(),
+    });
+    console.log('[admin/store-lead] Lead stored for session', session_id, '—', email);
+    return res.json({ status: 'ok' });
+  } catch (e) {
+    console.error('[admin/store-lead] Firestore write failed:', e.message);
+    return res.status(500).json({ error: 'Failed to store lead' });
+  }
+});
+
 // ─── Admin: Administrator Interview Generate Report (server-side Firestore fetch) ─
 // Unlike /admin/generate-report (which takes a pre-assembled prompt), this route
 // fetches superintendent_interview responses directly from Firestore, assembles
@@ -801,6 +869,105 @@ app.post('/admin/generate-administrator-report', requireAccessKey, async (req, r
     }
 
     console.log('[admin/generate-administrator-report] Success — report length:', data.content[0].text.length, 'chars');
+
+    // ── 7. Look up superintendent leads and email the report ─────────────────
+    const reportText = data.content[0].text;
+    const reportedSessionIds = new Set(sessions.map(s => s.session_id));
+
+    if (db && process.env.RESEND_API_KEY) {
+      try {
+        const leadsSnap = await db.collection('superintendent_leads').get();
+        const leads = leadsSnap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
+          .filter(l => reportedSessionIds.has(l.session_id) && l.email);
+
+        console.log('[admin/generate-administrator-report] Found', leads.length, 'leads to email');
+
+        const reportHtml = markdownToHtml(reportText);
+
+        for (const lead of leads) {
+          const subject = `Your Clarity 360 Leadership Interview Report — ${lead.firstName} ${lead.lastName}`;
+          const emailHtml = `<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#f8fafc;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;padding:40px 20px;">
+    <tr><td align="center">
+      <table width="620" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(99,102,241,0.10);">
+        <tr>
+          <td style="background:linear-gradient(135deg,#1e1b4b,#312e81);padding:36px 48px;">
+            <p style="margin:0 0 4px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:700;color:rgba(255,255,255,0.6);letter-spacing:0.12em;text-transform:uppercase;">Clarity 360</p>
+            <h1 style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:24px;font-weight:800;color:#ffffff;line-height:1.3">Your Leadership Interview Report</h1>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:36px 48px 24px;">
+            <p style="margin:0 0 20px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;color:#374151;line-height:1.7;">
+              Dear ${lead.firstName},
+            </p>
+            <p style="margin:0 0 28px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;color:#374151;line-height:1.7;">
+              Thank you for participating in the Clarity 360 Administrator Interview. Below is the synthesized report based on the responses gathered from your district&apos;s leadership listening tour.
+            </p>
+            <div style="background:#f8fafc;border-radius:12px;padding:32px 36px;border:1px solid #e0e7ff;margin-bottom:28px;">
+              ${reportHtml}
+            </div>
+            <div style="background:linear-gradient(135deg,rgba(220,38,38,0.06),rgba(185,28,28,0.04));border-radius:12px;padding:24px 28px;border:1.5px solid rgba(220,38,38,0.15);text-align:center;margin-bottom:24px;">
+              <p style="margin:0 0 16px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;font-weight:700;color:#1e1b4b;line-height:1.5;">
+                Ready to bring Clarity 360 to your district?<br>Schedule a conversation with our team.
+              </p>
+              <a href="https://clarity360hq.com/#schedule" style="display:inline-block;background:linear-gradient(135deg,#dc2626,#b91c1c);color:white;text-decoration:none;padding:14px 36px;border-radius:50px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;font-weight:800;box-shadow:0 4px 16px rgba(220,38,38,0.30);">
+                Schedule a Conversation →
+              </a>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#f8fafc;padding:20px 48px;border-top:1px solid #e0e7ff;">
+            <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#94a3b8;">
+              This report was generated by Clarity 360 · <a href="https://clarity360hq.com" style="color:#6366f1;text-decoration:none;">clarity360hq.com</a>
+            </p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+          try {
+            const emailRes = await fetch('https://api.resend.com/emails', {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                from: 'Clarity 360 <noreply@clarity360hq.com>',
+                to: [lead.email],
+                reply_to: 'knoell@engagingpd.com',
+                subject,
+                html: emailHtml,
+              }),
+            });
+            const emailData = await emailRes.json();
+            if (emailRes.ok) {
+              console.log('[admin/generate-administrator-report] Report emailed to', lead.email, '— Resend ID:', emailData.id);
+              // Update lead with reportSentAt
+              await db.collection('superintendent_leads').doc(lead.id).update({
+                reportSentAt: new Date().toISOString(),
+              });
+            } else {
+              console.error('[admin/generate-administrator-report] Resend error for', lead.email, ':', JSON.stringify(emailData));
+            }
+          } catch (emailErr) {
+            console.error('[admin/generate-administrator-report] Failed to send report email to', lead.email, ':', emailErr.message);
+          }
+        }
+      } catch (leadErr) {
+        console.error('[admin/generate-administrator-report] Lead lookup/email failed:', leadErr.message);
+        // Non-fatal — report generation still succeeds
+      }
+    } else {
+      console.log('[admin/generate-administrator-report] Skipping email — RESEND_API_KEY not set or db unavailable');
+    }
+
     // Return in the same shape as /admin/generate-report so the frontend can reuse the same handler
     return res.json(data);
 
