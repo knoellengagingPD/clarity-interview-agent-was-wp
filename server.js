@@ -735,6 +735,130 @@ app.post('/admin/store-lead', requireAccessKey, async (req, res) => {
   }
 });
 
+// ─── Admin: District Subscriptions CRUD ──────────────────────────────────────
+
+// GET /admin/subscriptions — list all documents in district_subscriptions
+app.get('/admin/subscriptions', requireAccessKey, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Firestore not available' });
+  try {
+    const snap = await db.collection('district_subscriptions').orderBy('createdAt', 'desc').get();
+    const subscriptions = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    return res.json({ subscriptions });
+  } catch (e) {
+    console.error('[admin/subscriptions GET] Failed:', e.message);
+    return res.status(500).json({ error: 'Failed to fetch subscriptions' });
+  }
+});
+
+// POST /admin/subscriptions — create a new district_subscriptions document
+app.post('/admin/subscriptions', requireAccessKey, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Firestore not available' });
+  try {
+    const {
+      districtName, contactName, contactEmail, tier, annualPrice, status,
+      subscriptionStart, subscriptionEnd, studentsEnrolled, notesForChris,
+    } = req.body;
+    if (!districtName || typeof districtName !== 'string') {
+      return res.status(400).json({ error: 'districtName is required' });
+    }
+    const doc = {
+      districtName: (districtName || '').trim(),
+      contactName:  (contactName  || '').trim(),
+      contactEmail: (contactEmail || '').trim(),
+      tier:         tier     || 'starter',
+      annualPrice:  typeof annualPrice === 'number' ? annualPrice : 1500,
+      status:       status   || 'trial',
+      subscriptionStart: subscriptionStart || new Date().toISOString().split('T')[0],
+      subscriptionEnd:   subscriptionEnd   || '',
+      studentsEnrolled:  typeof studentsEnrolled === 'number' ? studentsEnrolled : 0,
+      notesForChris:     (notesForChris || '').trim(),
+      renewalReminder:   false,
+      createdAt:         new Date().toISOString(),
+    };
+    const ref = await db.collection('district_subscriptions').add(doc);
+    console.log('[admin/subscriptions POST] Created subscription for', districtName, '— id:', ref.id);
+    return res.status(201).json({ status: 'ok', id: ref.id, ...doc });
+  } catch (e) {
+    console.error('[admin/subscriptions POST] Failed:', e.message);
+    return res.status(500).json({ error: 'Failed to create subscription' });
+  }
+});
+
+// PATCH /admin/subscriptions/:id — update an existing district_subscriptions document
+app.patch('/admin/subscriptions/:id', requireAccessKey, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Firestore not available' });
+  try {
+    const { id } = req.params;
+    const allowedFields = [
+      'districtName', 'contactName', 'contactEmail', 'tier', 'annualPrice',
+      'status', 'subscriptionStart', 'subscriptionEnd', 'studentsEnrolled',
+      'notesForChris', 'renewalReminder',
+    ];
+    const updates = {};
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        updates[field] = req.body[field];
+      }
+    }
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'No updatable fields provided' });
+    }
+    updates.updatedAt = new Date().toISOString();
+    await db.collection('district_subscriptions').doc(id).update(updates);
+    console.log('[admin/subscriptions PATCH] Updated', id, '—', JSON.stringify(updates));
+    return res.json({ status: 'ok', id, ...updates });
+  } catch (e) {
+    console.error('[admin/subscriptions PATCH] Failed:', e.message);
+    return res.status(500).json({ error: 'Failed to update subscription' });
+  }
+});
+
+// GET /admin/check-renewals — flag district_subscriptions approaching renewal within 30 days
+// Sets renewalReminder: true on any active subscription whose subscriptionEnd is within 30 days.
+// Returns a JSON summary of flagged districts.
+app.get('/admin/check-renewals', requireAccessKey, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Firestore not available' });
+  try {
+    const now = new Date();
+    const thirtyDaysFromNow = new Date(now);
+    thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
+
+    const snap = await db.collection('district_subscriptions')
+      .where('status', '==', 'active')
+      .get();
+
+    const flagged = [];
+    const batch = db.batch();
+    for (const doc of snap.docs) {
+      const data = doc.data();
+      if (!data.subscriptionEnd) continue;
+      const endDate = new Date(data.subscriptionEnd);
+      if (endDate <= thirtyDaysFromNow) {
+        batch.update(doc.ref, { renewalReminder: true });
+        flagged.push({
+          id: doc.id,
+          districtName: data.districtName,
+          subscriptionEnd: data.subscriptionEnd,
+          daysRemaining: Math.ceil((endDate - now) / (1000 * 60 * 60 * 24)),
+        });
+      }
+    }
+
+    if (flagged.length > 0) await batch.commit();
+
+    console.log('[admin/check-renewals] Flagged', flagged.length, 'district(s) approaching renewal');
+    return res.json({
+      status: 'ok',
+      checkedAt: now.toISOString(),
+      flaggedCount: flagged.length,
+      districts: flagged,
+    });
+  } catch (e) {
+    console.error('[admin/check-renewals] Failed:', e.message);
+    return res.status(500).json({ error: 'Failed to check renewals' });
+  }
+});
+
 // ─── Admin: Administrator Interview Generate Report (server-side Firestore fetch) ─
 // Unlike /admin/generate-report (which takes a pre-assembled prompt), this route
 // fetches superintendent_interview responses directly from Firestore, assembles
