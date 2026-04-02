@@ -859,6 +859,42 @@ app.get('/admin/check-renewals', requireAccessKey, async (req, res) => {
   }
 });
 
+// ─── Admin: Permanently delete a superintendent_interview session ──────────────
+// DELETE /admin/sessions/:sessionId — hard-deletes all Firestore response docs
+// for the given session_id. Authenticated with CLARITY_ACCESS_KEY.
+app.delete('/admin/sessions/:sessionId', requireAccessKey, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Firestore not available' });
+  try {
+    const { sessionId } = req.params;
+    if (!sessionId) return res.status(400).json({ error: 'sessionId is required' });
+
+    const snap = await db.collection('responses')
+      .where('session_id', '==', sessionId)
+      .where('section', '==', 'superintendent_interview')
+      .get();
+
+    if (snap.empty) {
+      return res.status(404).json({ error: 'No docs found for this session_id' });
+    }
+
+    // Delete in batches of 500
+    let deleted = 0;
+    const docs = snap.docs;
+    while (deleted < docs.length) {
+      const batch = db.batch();
+      docs.slice(deleted, deleted + 500).forEach(doc => batch.delete(doc.ref));
+      await batch.commit();
+      deleted = Math.min(deleted + 500, docs.length);
+    }
+
+    console.log(`[admin/sessions DELETE] Permanently deleted ${deleted} docs for session ${sessionId}`);
+    return res.json({ status: 'ok', sessionId, docsDeleted: deleted });
+  } catch (e) {
+    console.error('[admin/sessions DELETE] Failed:', e.message);
+    return res.status(500).json({ error: 'Failed to delete session' });
+  }
+});
+
 // ─── Admin: Administrator Interview Generate Report (server-side Firestore fetch) ─
 // Unlike /admin/generate-report (which takes a pre-assembled prompt), this route
 // fetches superintendent_interview responses directly from Firestore, assembles
@@ -2967,6 +3003,89 @@ app.get('/school-climate/sessions', requireAccessKey, async (req, res) => {
       error: 'Failed to fetch school climate sessions',
       detail: e.message || String(e),
     });
+  }
+});
+
+// ─── School Climate: Crisis Flag & Alert ─────────────────────────────────────
+// POST /school-climate/flag-session
+// Called by the frontend when crisis keywords are detected in the participant's
+// transcript. Does NOT receive any transcript content — only session metadata.
+// Stores crisis_flag: true in Firestore and fires a Resend alert email.
+// Intentionally unauthenticated (no CLARITY_KEY required) so it can be called
+// from the participant-facing page without exposing the admin key to the client.
+app.post('/school-climate/flag-session', async (req, res) => {
+  const { session_id, token, school_id, school_name } = req.body;
+  if (!session_id || !token) {
+    return res.status(400).json({ error: 'session_id and token are required' });
+  }
+
+  // Write crisis flag to Firestore (best-effort — don't fail the response if db is down)
+  if (db) {
+    try {
+      await db.collection('crisis_flags').add({
+        session_id,
+        token,
+        school_id:   school_id   || 'unknown',
+        school_name: school_name || 'unknown',
+        crisis_flag: true,
+        flaggedAt:   new Date().toISOString(),
+      });
+      console.log('[school-climate/flag-session] Crisis flag written for session', session_id, 'at school', school_name);
+    } catch (e) {
+      console.error('[school-climate/flag-session] Firestore write failed:', e.message);
+    }
+  }
+
+  // Send alert email via Resend (best-effort)
+  if (process.env.RESEND_API_KEY) {
+    try {
+      const emailRes = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from:    'Clarity 360 <noreply@clarity360hq.com>',
+          to:      ['knoell@engagingpd.com'],
+          subject: 'Clarity 360 — Crisis Language Detected',
+          html: `<p>A session at <strong>${school_name || 'unknown school'}</strong> was flagged for potential crisis language during a School Climate Survey.</p>
+<p>The participant was immediately provided the 988 Suicide and Crisis Lifeline resource during the interview.</p>
+<p>No identifying information or transcript content is available.</p>
+<p>Please notify the district contact so they can activate their crisis protocols.</p>
+<hr>
+<p style="color:#888;font-size:12px;">Session token: ${token} &nbsp;|&nbsp; School ID: ${school_id || 'unknown'}</p>`,
+        }),
+      });
+      const emailData = await emailRes.json();
+      if (emailRes.ok) {
+        console.log('[school-climate/flag-session] Alert email sent — Resend ID:', emailData.id);
+      } else {
+        console.error('[school-climate/flag-session] Resend error:', JSON.stringify(emailData));
+      }
+    } catch (e) {
+      console.error('[school-climate/flag-session] Email send failed:', e.message);
+    }
+  } else {
+    console.warn('[school-climate/flag-session] RESEND_API_KEY not set — skipping alert email');
+  }
+
+  return res.json({ status: 'ok', flagged: true });
+});
+
+// ─── School Climate: Crisis Flags by School ───────────────────────────────────
+// GET /school-climate/crisis-flags?school_id=
+// Returns count of flagged sessions for a given school. Admin-authenticated.
+app.get('/school-climate/crisis-flags', requireAccessKey, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Firestore not available' });
+  try {
+    const { school_id } = req.query;
+    if (!school_id) return res.status(400).json({ error: 'school_id is required' });
+    const snap = await db.collection('crisis_flags')
+      .where('school_id', '==', school_id)
+      .where('crisis_flag', '==', true)
+      .get();
+    return res.json({ school_id, flaggedCount: snap.size });
+  } catch (e) {
+    console.error('[school-climate/crisis-flags] Failed:', e.message);
+    return res.status(500).json({ error: 'Failed to fetch crisis flags' });
   }
 });
 
