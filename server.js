@@ -2833,6 +2833,226 @@ app.post('/school-climate/tokens', requireAccessKey, async (req, res) => {
   }
 });
 
+// ─── School Climate: Send Deployment Email ────────────────────────────────────
+// POST /school-climate/send-deployment-email
+// Sends a role-specific survey invitation email to a recipient. Includes the
+// full question list so participants can review before starting.
+app.post('/school-climate/send-deployment-email', requireAccessKey, async (req, res) => {
+  const { role, token, school_name, recipient_email } = req.body;
+
+  const validRoles = ['students', 'teachers', 'staff', 'parents'];
+  if (!role || !validRoles.includes(role)) {
+    return res.status(400).json({ error: `role must be one of: ${validRoles.join(', ')}` });
+  }
+  if (!token || typeof token !== 'string') {
+    return res.status(400).json({ error: 'token is required' });
+  }
+  if (!recipient_email || typeof recipient_email !== 'string' || !recipient_email.includes('@')) {
+    return res.status(400).json({ error: 'Valid recipient_email is required' });
+  }
+  if (!process.env.RESEND_API_KEY) {
+    return res.status(503).json({ error: 'Email not configured on this server' });
+  }
+
+  const ROLE_LABELS = { students: 'Student', teachers: 'Teacher', staff: 'Staff', parents: 'Parent' };
+  const SURVEY_BASE = 'https://schoolclimate.clarity360hq.com/school-climate';
+  const surveyUrl = `${SURVEY_BASE}/${role}?token=${token}`;
+  const roleLabel = ROLE_LABELS[role];
+  const schoolDisplay = school_name || 'your school';
+
+  const CLIMATE_QUESTIONS = {
+    students: [
+      { n: 1,  text: 'I feel safe at this school.',                                                          open: false },
+      { n: 2,  text: 'I worry about violence or fights happening here.',                                     open: false },
+      { n: 3,  text: 'Teachers and adults treat students with respect.',                                     open: false },
+      { n: 4,  text: 'Students treat each other with respect.',                                             open: false },
+      { n: 5,  text: 'If I report bullying, an adult will do something about it.',                          open: false },
+      { n: 6,  text: 'The rules at this school are fair.',                                                   open: false },
+      { n: 7,  text: 'Students at this school are bullied.',                                                 open: false },
+      { n: 8,  text: 'I feel like I belong at this school.',                                                 open: false },
+      { n: 9,  text: 'There is at least one adult at this school I can go to for help.',                    open: false },
+      { n: 10, text: 'This school supports students of different backgrounds and identities.',               open: false },
+      { n: 11, text: 'When I am upset, adults at this school show they care.',                               open: false },
+      { n: 12, text: 'My teachers give me feedback that helps me get better.',                               open: false },
+      { n: 13, text: 'Students have opportunities to participate in activities at this school.',             open: false },
+      { n: 14, text: 'This school has the resources and materials I need to learn.',                        open: false },
+      { n: 15, text: 'If you could change one or two things to make school better for everyone, what would they be?', open: true },
+      { n: 16, text: 'What is one thing about your school that you really love and never want to change?',  open: true },
+    ],
+    teachers: [
+      { n: 1,  text: 'I feel safe at this school.',                                                          open: false },
+      { n: 2,  text: 'Students treat teachers with respect.',                                                open: false },
+      { n: 3,  text: 'Teachers at this school treat students with respect.',                                 open: false },
+      { n: 4,  text: 'The rules for student behavior are fair.',                                             open: false },
+      { n: 5,  text: 'I am comfortable reporting safety concerns to school administrators.',                 open: false },
+      { n: 6,  text: 'Adults at this school try to stop bullying when they see it.',                        open: false },
+      { n: 7,  text: 'Bullying is a problem at this school.',                                                open: false },
+      { n: 8,  text: 'I feel like I belong at this school.',                                                 open: false },
+      { n: 9,  text: 'The staff at this school work well together.',                                         open: false },
+      { n: 10, text: 'School administrators value my opinions and ideas.',                                   open: false },
+      { n: 11, text: 'I feel supported by the school administration.',                                       open: false },
+      { n: 12, text: 'Communication among staff at this school is open and honest.',                        open: false },
+      { n: 13, text: 'I have at least one colleague I can turn to for support at work.',                    open: false },
+      { n: 14, text: 'I have access to adequate instructional materials and resources.',                    open: false },
+      { n: 15, text: 'Teachers have sufficient time to collaborate with colleagues.',                        open: false },
+      { n: 16, text: 'Overall, this school provides a positive environment for teaching and learning.',     open: false },
+      { n: 17, text: 'If funding were not a barrier, what one or two practical changes would most improve teaching and learning at this school?', open: true },
+      { n: 18, text: 'What is one thing this school does really well that you never want to change?',       open: true },
+    ],
+    staff: [
+      { n: 1,  text: 'I feel safe at this school.',                                                          open: false },
+      { n: 2,  text: 'Students treat staff members with respect.',                                           open: false },
+      { n: 3,  text: 'Students at this school treat each other with respect.',                               open: false },
+      { n: 4,  text: 'Adults at this school try to stop bullying.',                                          open: false },
+      { n: 5,  text: 'The rules at this school are fair.',                                                   open: false },
+      { n: 6,  text: 'I am comfortable reporting safety concerns to administrators.',                        open: false },
+      { n: 7,  text: 'Bullying is a problem at this school.',                                                open: false },
+      { n: 8,  text: 'I feel like I belong at this school.',                                                 open: false },
+      { n: 9,  text: 'I feel supported by the teachers at this school.',                                     open: false },
+      { n: 10, text: 'I feel supported by the school administration.',                                       open: false },
+      { n: 11, text: 'My input is valued when decisions are made.',                                          open: false },
+      { n: 12, text: 'Communication among staff is open and honest.',                                        open: false },
+      { n: 13, text: 'The school building and grounds are clean and well maintained.',                      open: false },
+      { n: 14, text: 'I have the materials and supplies I need to perform my job effectively.',             open: false },
+      { n: 15, text: 'Overall this school provides a positive environment for students and staff.',         open: false },
+      { n: 16, text: 'If funding were not a barrier, what one or two changes would most improve the experience of staff and students at this school?', open: true },
+      { n: 17, text: 'What is one thing about working at this school that you value most and never want to change?', open: true },
+    ],
+    parents: [
+      { n: 1,  text: 'My child feels safe at school.',                                                       open: false },
+      { n: 2,  text: 'Teachers and staff treat students with respect.',                                      open: false },
+      { n: 3,  text: 'The rules for student behavior are fair.',                                             open: false },
+      { n: 4,  text: 'The school deals effectively with bullying.',                                          open: false },
+      { n: 5,  text: 'I feel comfortable reporting safety concerns to school staff.',                        open: false },
+      { n: 6,  text: 'I feel welcome at my child\'s school.',                                                open: false },
+      { n: 7,  text: 'The teachers at this school care about my child.',                                     open: false },
+      { n: 8,  text: 'The school keeps me informed about my child\'s academic progress.',                   open: false },
+      { n: 9,  text: 'School staff respond promptly to my questions and concerns.',                         open: false },
+      { n: 10, text: 'I have opportunities to share my opinions about school decisions.',                   open: false },
+      { n: 11, text: 'My child\'s teachers have high expectations for my child.',                           open: false },
+      { n: 12, text: 'Students from different backgrounds are respected at this school.',                   open: false },
+      { n: 13, text: 'My child has access to the resources needed to succeed at school.',                   open: false },
+      { n: 14, text: 'Teachers give my child feedback that helps them learn.',                               open: false },
+      { n: 15, text: 'This school is a welcoming place for students of all backgrounds.',                   open: false },
+      { n: 16, text: 'If funding were not a barrier, what one or two changes would most improve your child\'s experience at this school?', open: true },
+      { n: 17, text: 'What is one thing this school does really well for students and families that you never want to change?', open: true },
+    ],
+  };
+
+  const questions = CLIMATE_QUESTIONS[role];
+  const questionRows = questions.map(q =>
+    `<tr><td style="padding:7px 0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:14px;color:#374151;line-height:1.65;border-bottom:1px solid #f1f5f9;">` +
+    `<span style="font-weight:700;color:#6366f1;margin-right:8px;">${q.n}.</span>${q.text}` +
+    (q.open ? `<span style="font-style:italic;color:#94a3b8;font-size:12px;margin-left:6px;">(Open — share your thoughts)</span>` : '') +
+    `</td></tr>`
+  ).join('');
+
+  const html = `<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f8fafc;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;padding:40px 20px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(99,102,241,0.10);">
+        <!-- Header -->
+        <tr>
+          <td style="background:linear-gradient(135deg,#6366f1,#4f46e5);padding:36px 48px;">
+            <p style="margin:0 0 4px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:700;color:rgba(255,255,255,0.7);letter-spacing:0.12em;text-transform:uppercase;">Clarity 360</p>
+            <h1 style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:26px;font-weight:800;color:#ffffff;">Your ${roleLabel} School Climate Survey</h1>
+          </td>
+        </tr>
+        <!-- Body -->
+        <tr>
+          <td style="padding:40px 48px;">
+            <p style="margin:0 0 20px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;color:#374151;line-height:1.7;">
+              You have been invited to participate in the <strong style="color:#4f46e5;">Clarity 360 School Climate Survey</strong> for <strong>${schoolDisplay}</strong>. This confidential, voice-guided survey takes approximately 10–15 minutes to complete.
+            </p>
+
+            <!-- Survey link button -->
+            <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:36px;">
+              <tr>
+                <td align="center" style="background:#eef2ff;border-radius:12px;padding:28px;">
+                  <p style="margin:0 0 16px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;color:#6366f1;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;">Your Survey Link</p>
+                  <a href="${surveyUrl}" style="display:inline-block;background:linear-gradient(135deg,#6366f1,#4f46e5);color:#ffffff;text-decoration:none;padding:14px 36px;border-radius:50px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;font-weight:800;box-shadow:0 6px 18px rgba(99,102,241,0.35);">
+                    Begin My Survey →
+                  </a>
+                  <p style="margin:14px 0 0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#94a3b8;">Or copy this link: <span style="color:#4f46e5;">${surveyUrl}</span></p>
+                </td>
+              </tr>
+            </table>
+
+            <!-- To help you prepare -->
+            <p style="margin:0 0 10px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:16px;font-weight:800;color:#1e1b4b;">To help you prepare</p>
+            <p style="margin:0 0 16px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:14px;color:#374151;line-height:1.7;">
+              You will be presented with each item on a 4-point scale. Select your level of agreement, then share your thoughts in your own words. There are no right or wrong answers — your honest perspective is what matters most.
+            </p>
+
+            <!-- Scale chips -->
+            <table cellpadding="0" cellspacing="4" style="margin-bottom:20px;">
+              <tr>
+                <td style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:50px;padding:4px 12px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:700;color:#4f46e5;white-space:nowrap;">1 = Strongly Disagree</td>
+                <td style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:50px;padding:4px 12px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:700;color:#4f46e5;white-space:nowrap;">2 = Disagree</td>
+                <td style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:50px;padding:4px 12px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:700;color:#4f46e5;white-space:nowrap;">3 = Agree</td>
+                <td style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:50px;padding:4px 12px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:700;color:#4f46e5;white-space:nowrap;">4 = Strongly Agree</td>
+              </tr>
+            </table>
+
+            <!-- Question list -->
+            <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:32px;">
+              ${questionRows}
+            </table>
+
+            <!-- Confidentiality note -->
+            <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0fdf4;border-radius:10px;padding:16px 20px;margin-bottom:8px;">
+              <tr>
+                <td style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;color:#166534;line-height:1.6;">
+                  🔒 <strong>Your responses are fully confidential.</strong> Individual answers are never shared — only aggregated, anonymous results are reported to school leadership.
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <!-- Footer -->
+        <tr>
+          <td style="background:#f8fafc;padding:24px 48px;border-top:1px solid #e0e7ff;">
+            <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#94a3b8;">
+              This invitation was sent via Clarity 360. Questions? Contact <a href="mailto:knoell@engagingpd.com" style="color:#6366f1;text-decoration:none;">knoell@engagingpd.com</a>.
+            </p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+  try {
+    const emailRes = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: 'Clarity 360 <noreply@clarity360hq.com>',
+        to: [recipient_email.trim()],
+        subject: `Your ${roleLabel} School Climate Survey — ${schoolDisplay}`,
+        html,
+      }),
+    });
+    const data = await emailRes.json();
+    if (!emailRes.ok) {
+      log.error('Deployment email send failed', { role, status: emailRes.status, body: JSON.stringify(data) });
+      return res.status(502).json({ error: 'Failed to send email' });
+    }
+    log.info('Deployment email sent', { role, recipient: recipient_email, resendId: data.id });
+    return res.json({ status: 'ok', id: data.id });
+  } catch (e) {
+    log.error('Deployment email fetch error', { error: e.message });
+    return res.status(500).json({ error: 'Email send failed' });
+  }
+});
+
 // ─── School Climate: Sessions & Scores ────────────────────────────────────────
 // GET /school-climate/sessions?school_id=&role=&start_date=&end_date=
 // Requires access key. Returns sessions grouped by role with per-question and
