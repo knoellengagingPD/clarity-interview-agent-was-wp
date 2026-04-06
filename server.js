@@ -895,6 +895,70 @@ app.delete('/admin/sessions/:sessionId', requireAccessKey, async (req, res) => {
   }
 });
 
+// ─── Admin: Interview Completion Notification ─────────────────────────────────
+// POST /admin/notify-interview-complete — fires when an administrator finishes
+// the Clarity 360 interview. Sends a notification email to knoell@engagingpd.com
+// with the session ID, timestamp, and a link to the admin dashboard.
+app.post('/admin/notify-interview-complete', requireAccessKey, async (req, res) => {
+  const { session_id } = req.body;
+  if (!session_id) return res.status(400).json({ error: 'session_id is required' });
+
+  const timestamp = new Date().toLocaleString('en-US', {
+    timeZone: 'America/Chicago',
+    month: 'long', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', timeZoneName: 'short'
+  });
+
+  try {
+    const { data, error } = await resend.emails.send({
+      from: 'noreply@clarity360hq.com',
+      to: 'knoell@engagingpd.com',
+      subject: `✅ Clarity 360 Interview Completed — ${session_id}`,
+      html: `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 560px; margin: 0 auto; background: #f9fafb; padding: 32px 24px;">
+          <div style="background: linear-gradient(135deg, #dc2626, #b91c1c); border-radius: 12px 12px 0 0; padding: 28px 32px; text-align: center;">
+            <h1 style="margin: 0; color: #ffffff; font-size: 22px; font-weight: 700; letter-spacing: -0.3px;">
+              Clarity 360 Interview Complete
+            </h1>
+            <p style="margin: 8px 0 0; color: rgba(255,255,255,0.85); font-size: 14px;">An administrator has finished their interview</p>
+          </div>
+          <div style="background: #ffffff; border-radius: 0 0 12px 12px; padding: 28px 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+            <table style="width: 100%; border-collapse: collapse; margin-bottom: 24px;">
+              <tr>
+                <td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; color: #6b7280; font-size: 13px; width: 120px;">Session ID</td>
+                <td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; color: #111827; font-size: 13px; font-family: monospace;">${session_id}</td>
+              </tr>
+              <tr>
+                <td style="padding: 10px 0; color: #6b7280; font-size: 13px;">Completed</td>
+                <td style="padding: 10px 0; color: #111827; font-size: 13px;">${timestamp}</td>
+              </tr>
+            </table>
+            <div style="text-align: center; margin-bottom: 24px;">
+              <a href="https://clarity360hq.com/admin" style="display: inline-block; background: linear-gradient(135deg, #dc2626, #b91c1c); color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-size: 14px; font-weight: 600;">
+                View Admin Dashboard →
+              </a>
+            </div>
+            <p style="margin: 0; color: #9ca3af; font-size: 12px; text-align: center;">
+              Clarity 360 by EngagingPD &nbsp;·&nbsp; Automated notification
+            </p>
+          </div>
+        </div>
+      `
+    });
+
+    if (error) {
+      console.error('[admin/notify-interview-complete] Resend error:', error);
+      return res.status(500).json({ error: 'Email send failed' });
+    }
+
+    console.log(`[admin/notify-interview-complete] Notification sent for session ${session_id} — Resend id: ${data?.id}`);
+    return res.json({ status: 'ok', emailId: data?.id });
+  } catch (e) {
+    console.error('[admin/notify-interview-complete] Unexpected error:', e.message);
+    return res.status(500).json({ error: 'Unexpected server error' });
+  }
+});
+
 // ─── Admin: Administrator Interview Generate Report (server-side Firestore fetch) ─
 // Unlike /admin/generate-report (which takes a pre-assembled prompt), this route
 // fetches superintendent_interview responses directly from Firestore, assembles
