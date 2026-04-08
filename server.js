@@ -9,9 +9,11 @@
 
 import 'dotenv/config';
 import express from 'express';
+import cors from 'cors';
 import fetch from 'node-fetch';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import admin from 'firebase-admin';
 import Stripe from 'stripe';
 
@@ -307,32 +309,35 @@ async function fetchWithTimeout(url, options, timeoutMs = 10_000) {
 // ─── Express App Setup ────────────────────────────────────────────────────────
 const app = express();
 
-app.use((req, res, next) => {
-  const allowed = [
-    'http://localhost:3000',
-    'http://localhost:3001',
-    'http://localhost:3002',
-    'http://localhost:3003',
-    'https://clarity-voice-ui-workplace.vercel.app',
-    'https://clarity-interview-agent-was-wp.vercel.app',
-    'https://find-my-purpose.vercel.app',
-    'https://clarity360hq.com',
-    'https://www.clarity360hq.com',
-    'https://engagingpurpose.com',
-    'https://www.engagingpurpose.com',
-    'https://renewedtude.engagingpd.com',
-    'https://www.renewedtude.engagingpd.com',
-    // Allow any *.vercel.app subdomain for preview deployments
-  ];
-  const origin = req.headers.origin || '';
-  if (allowed.includes(origin) || origin.endsWith('.vercel.app') || origin.endsWith('.ngrok.io') || origin.endsWith('.clarity360hq.com') || origin.endsWith('.engagingpurpose.com')) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  }
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-clarity-key');
-  if (req.method === 'OPTIONS') return res.sendStatus(204);
-  next();
-});
+const corsOptions = {
+  origin: function(origin, callback) {
+    const allowed = [
+      'https://clarity-voice-ui-workplace.vercel.app',
+      'https://www.clarity360hq.com',
+      'https://administrators.clarity360hq.com',
+      'https://schoolclimate.clarity360hq.com',
+      'https://clarity360hq.com',
+      'http://localhost:3000',
+      'http://localhost:3001'
+    ];
+    if (!origin || allowed.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'x-clarity-key',
+    'x-admin-key'
+  ],
+  methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+  credentials: true,
+  optionsSuccessStatus: 200
+};
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -644,7 +649,7 @@ app.post('/admin/generate-report', requireAccessKey, async (req, res) => {
       body: JSON.stringify({
         model: 'claude-sonnet-4-5',
         max_tokens: 8192,
-        system: 'You are a professional analyst writing a stakeholder report. Write this report in a neutral, professional third-person voice about what the interviewees said and believe. Do not reference the interview process, the AI, or "Clarity" anywhere in the report body — do not write phrases like "Clarity asked", "the AI noted", "the interviewer found", or "based on what Clarity heard". Write about what stakeholders said and believe, not about how the interview was conducted. The report should read as if a human analyst synthesized the responses.',
+        system: 'You are writing an institutional report on behalf of Clarity 360. Write in first-person institutional voice, as if Clarity 360 is the author delivering findings directly to the reader — for example: "Across our surveys, the dominant theme was..." or "Our respondents expressed...". Never write "Clarity 360 found that...", "According to Clarity 360...", or any phrase that treats Clarity 360 as an outside observer. Do not reference the interview process, the AI, or the tool itself. The report should read as authoritative synthesis authored by the organization.',
         messages: [{ role: 'user', content: prompt }],
       }),
     });
@@ -897,8 +902,9 @@ app.delete('/admin/sessions/:sessionId', requireAccessKey, async (req, res) => {
 
 // ─── Admin: Interview Completion Notification ─────────────────────────────────
 // POST /admin/notify-interview-complete — fires when an administrator finishes
-// the Clarity 360 interview. Sends a notification email to knoell@engagingpd.com
-// with the session ID, timestamp, and a link to the admin dashboard.
+// the Clarity 360 interview. Queries Firestore for the response count, then sends
+// a notification email to knoell@engagingpd.com with timestamp, session ID,
+// number of responses recorded, and a link to the admin dashboard.
 app.post('/admin/notify-interview-complete', requireAccessKey, async (req, res) => {
   const { session_id } = req.body;
   if (!session_id) return res.status(400).json({ error: 'session_id is required' });
@@ -909,53 +915,86 @@ app.post('/admin/notify-interview-complete', requireAccessKey, async (req, res) 
     hour: 'numeric', minute: '2-digit', timeZoneName: 'short'
   });
 
-  try {
-    const { data, error } = await resend.emails.send({
-      from: 'noreply@clarity360hq.com',
-      to: 'knoell@engagingpd.com',
-      subject: `✅ Clarity 360 Interview Completed — ${session_id}`,
-      html: `
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 560px; margin: 0 auto; background: #f9fafb; padding: 32px 24px;">
-          <div style="background: linear-gradient(135deg, #dc2626, #b91c1c); border-radius: 12px 12px 0 0; padding: 28px 32px; text-align: center;">
-            <h1 style="margin: 0; color: #ffffff; font-size: 22px; font-weight: 700; letter-spacing: -0.3px;">
-              Clarity 360 Interview Complete
-            </h1>
-            <p style="margin: 8px 0 0; color: rgba(255,255,255,0.85); font-size: 14px;">An administrator has finished their interview</p>
-          </div>
-          <div style="background: #ffffff; border-radius: 0 0 12px 12px; padding: 28px 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-            <table style="width: 100%; border-collapse: collapse; margin-bottom: 24px;">
-              <tr>
-                <td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; color: #6b7280; font-size: 13px; width: 120px;">Session ID</td>
-                <td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; color: #111827; font-size: 13px; font-family: monospace;">${session_id}</td>
-              </tr>
-              <tr>
-                <td style="padding: 10px 0; color: #6b7280; font-size: 13px;">Completed</td>
-                <td style="padding: 10px 0; color: #111827; font-size: 13px;">${timestamp}</td>
-              </tr>
-            </table>
-            <div style="text-align: center; margin-bottom: 24px;">
-              <a href="https://clarity360hq.com/admin" style="display: inline-block; background: linear-gradient(135deg, #dc2626, #b91c1c); color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-size: 14px; font-weight: 600;">
-                View Admin Dashboard →
-              </a>
-            </div>
-            <p style="margin: 0; color: #9ca3af; font-size: 12px; text-align: center;">
-              Clarity 360 by EngagingPD &nbsp;·&nbsp; Automated notification
-            </p>
-          </div>
-        </div>
-      `
-    });
+  // Count responses saved for this session
+  let responseCount = 0;
+  if (db) {
+    try {
+      const snap = await db.collection('responses')
+        .where('session_id', '==', session_id)
+        .where('section', '==', 'superintendent_interview')
+        .get();
+      responseCount = snap.size;
+    } catch (countErr) {
+      console.warn('[admin/notify-interview-complete] Could not count responses:', countErr.message);
+    }
+  }
 
-    if (error) {
-      console.error('[admin/notify-interview-complete] Resend error:', error);
-      return res.status(500).json({ error: 'Email send failed' });
+  if (!process.env.RESEND_API_KEY) {
+    console.error('[admin/notify-interview-complete] RESEND_API_KEY is not set');
+    return res.status(503).json({ error: 'RESEND_API_KEY environment variable is not set on this server' });
+  }
+
+  const notifyHtml = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 560px; margin: 0 auto; background: #f9fafb; padding: 32px 24px;">
+      <div style="background: linear-gradient(135deg, #dc2626, #b91c1c); border-radius: 12px 12px 0 0; padding: 28px 32px; text-align: center;">
+        <h1 style="margin: 0; color: #ffffff; font-size: 22px; font-weight: 700; letter-spacing: -0.3px;">
+          New Administrator Interview Completed
+        </h1>
+        <p style="margin: 8px 0 0; color: rgba(255,255,255,0.85); font-size: 14px;">Clarity 360 — Administrator Interview</p>
+      </div>
+      <div style="background: #ffffff; border-radius: 0 0 12px 12px; padding: 28px 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 24px;">
+          <tr>
+            <td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; color: #6b7280; font-size: 13px; width: 140px;">Session ID</td>
+            <td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; color: #111827; font-size: 13px; font-family: monospace;">${session_id}</td>
+          </tr>
+          <tr>
+            <td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; color: #6b7280; font-size: 13px;">Completed</td>
+            <td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; color: #111827; font-size: 13px;">${timestamp}</td>
+          </tr>
+          <tr>
+            <td style="padding: 10px 0; color: #6b7280; font-size: 13px;">Responses recorded</td>
+            <td style="padding: 10px 0; color: #111827; font-size: 13px; font-weight: 600;">${responseCount}</td>
+          </tr>
+        </table>
+        <div style="text-align: center; margin-bottom: 24px;">
+          <a href="https://clarity-voice-ui-workplace.vercel.app/admin" style="display: inline-block; background: linear-gradient(135deg, #dc2626, #b91c1c); color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-size: 14px; font-weight: 600;">
+            View Admin Dashboard →
+          </a>
+        </div>
+        <p style="margin: 0; color: #9ca3af; font-size: 12px; text-align: center;">
+          Clarity 360 by EngagingPD &nbsp;·&nbsp; Automated notification
+        </p>
+      </div>
+    </div>
+  `;
+
+  try {
+    const emailRes = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: 'Clarity 360 <noreply@clarity360hq.com>',
+        to: ['knoell@engagingpd.com'],
+        subject: 'New Administrator Interview Completed — Clarity 360',
+        html: notifyHtml,
+      }),
+    });
+    const emailData = await emailRes.json();
+
+    if (!emailRes.ok) {
+      console.error('[admin/notify-interview-complete] Resend API error:', emailRes.status, JSON.stringify(emailData));
+      return res.status(502).json({ error: 'Email send failed', detail: emailData?.message || emailData });
     }
 
-    console.log(`[admin/notify-interview-complete] Notification sent for session ${session_id} — Resend id: ${data?.id}`);
-    return res.json({ status: 'ok', emailId: data?.id });
+    console.log(`[admin/notify-interview-complete] Notification sent for session ${session_id} (${responseCount} responses) — Resend id: ${emailData.id}`);
+    return res.json({ status: 'ok', emailId: emailData.id, responseCount });
   } catch (e) {
     console.error('[admin/notify-interview-complete] Unexpected error:', e.message);
-    return res.status(500).json({ error: 'Unexpected server error' });
+    return res.status(500).json({ error: 'Unexpected server error', detail: e.message });
   }
 });
 
@@ -1052,7 +1091,7 @@ app.post('/admin/generate-administrator-report', requireAccessKey, async (req, r
       return `=== Interview Session ${i + 1} (${s.session_id}) ===\n${turnLines}`;
     }).join('\n\n');
 
-    const prompt = `The following are ${sessions.length} Administrator Interview session(s) from a superintendent listening tour. Synthesize the responses into a professional stakeholder report.\n\nINTERVIEW SESSIONS:\n${sessionBlocks}\n\nWrite a structured report with these sections:\n1. Executive Summary\n2. Key Themes & Findings\n3. Areas of Strength\n4. Areas for Growth / Improvement\n5. Actionable Recommendations\n\nWrite in a professional, neutral third-person voice. Do not reference the interview format or AI.`;
+    const prompt = `The following are ${sessions.length} Administrator Interview session(s) from a superintendent listening tour. Synthesize the responses into a professional stakeholder report.\n\nINTERVIEW SESSIONS:\n${sessionBlocks}\n\nWrite a structured report with these sections:\n1. Executive Summary\n2. Key Themes & Findings\n3. Areas of Strength\n4. Areas for Growth / Improvement\n5. Actionable Recommendations\n\nWrite in first-person institutional voice, as if Clarity 360 is the author delivering findings directly to the reader — for example: "Across our administrator interviews, the dominant theme was..." or "Our findings indicate...". Never write "Clarity 360 found that...", "According to Clarity 360...", or any phrase that treats Clarity 360 as an outside observer. Do not reference the interview format or AI.`;
 
     console.log('[admin/generate-administrator-report] Prompt length:', prompt.length, 'chars');
     console.log('[admin/generate-administrator-report] Prompt preview:', prompt.substring(0, 300));
@@ -1072,7 +1111,7 @@ app.post('/admin/generate-administrator-report', requireAccessKey, async (req, r
       body: JSON.stringify({
         model: 'claude-sonnet-4-5',
         max_tokens: 8192,
-        system: 'You are a professional analyst writing a stakeholder report on behalf of Clarity 360. Write this report in a neutral, professional third-person voice about what the interviewees said and believe. You may refer to "Clarity 360" as the platform that gathered these responses, but do not reference the AI or the interview process itself — do not write phrases like "the AI noted", "the interviewer found", or "based on what the AI heard". Write about what stakeholders said and believe, synthesizing their responses into a coherent narrative. The report should read as if a professional human analyst at Clarity 360 reviewed the responses and synthesized the findings.',
+        system: 'You are writing an institutional report on behalf of Clarity 360. Write in first-person institutional voice, as if Clarity 360 is the author delivering findings directly to the reader — for example: "Across our administrator interviews, the dominant theme was..." or "Our findings indicate...". Never write "Clarity 360 found that...", "According to Clarity 360...", or any phrase that treats Clarity 360 as an outside observer. Do not reference the interview process, the AI, or the tool itself. The report should read as authoritative synthesis authored by the organization.',
         messages: [{ role: 'user', content: prompt }],
       }),
     });
@@ -1269,7 +1308,7 @@ app.post('/fmp/admin/generate-report', requireAccessKey, async (req, res) => {
       body: JSON.stringify({
         model: 'claude-sonnet-4-5',
         max_tokens: 8192,
-        system: 'You are a professional analyst writing a stakeholder report. Write this report in a neutral, professional third-person voice about what the interviewees said and believe. Do not reference the interview process, the AI, or "Clarity" anywhere in the report body — do not write phrases like "Clarity asked", "the AI noted", "the interviewer found", or "based on what Clarity heard". Write about what stakeholders said and believe, not about how the interview was conducted. The report should read as if a human analyst synthesized the responses.',
+        system: 'You are writing an institutional report on behalf of Clarity 360. Write in first-person institutional voice, as if Clarity 360 is the author delivering findings directly to the reader — for example: "Across our interviews, the dominant theme was..." or "Our participants expressed...". Never write "Clarity 360 found that...", "According to Clarity 360...", or any phrase that treats Clarity 360 as an outside observer. Do not reference the interview process, the AI, or the tool itself. The report should read as authoritative synthesis authored by the organization.',
         messages: [{ role: 'user', content: prompt }],
       }),
     });
@@ -1843,7 +1882,7 @@ Write in second person ("you", "your"). Be warm, specific, and meaningful. Refer
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-5',
-        max_tokens: 2000,
+        max_tokens: 4000,
         messages: [{ role: 'user', content: prompt }],
       }),
     });
@@ -2801,6 +2840,330 @@ app.post('/fmp/send-checkin-reminder', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// DISTRICT PORTAL — public (OTP auth) + admin endpoints
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── JWT helpers (Node.js built-in crypto — no external dep) ──────────────────
+function jwtSign(payload, secret) {
+  const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
+  const body   = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const sig    = crypto.createHmac('sha256', secret).update(`${header}.${body}`).digest('base64url');
+  return `${header}.${body}.${sig}`;
+}
+function jwtVerify(token, secret) {
+  const parts = (token || '').split('.');
+  if (parts.length !== 3) throw new Error('Malformed token');
+  const [header, body, sig] = parts;
+  const expected = crypto.createHmac('sha256', secret).update(`${header}.${body}`).digest('base64url');
+  const sigBuf  = Buffer.from(sig,      'base64url');
+  const expBuf  = Buffer.from(expected, 'base64url');
+  if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf))
+    throw new Error('Invalid signature');
+  const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+  if (payload.exp && Math.floor(Date.now() / 1000) > payload.exp)
+    throw new Error('Token expired');
+  return payload;
+}
+function requireDistrictJWT(req, res, next) {
+  try {
+    const auth = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    if (!auth) return res.status(401).json({ error: 'Missing authorization token' });
+    const secret = process.env.AUTH_HMAC_SECRET;
+    if (!secret) { log.error('AUTH_HMAC_SECRET not set'); return res.status(500).json({ error: 'Server misconfiguration' }); }
+    req.districtClaims = jwtVerify(auth, secret);
+    next();
+  } catch (e) {
+    return res.status(401).json({ error: e.message });
+  }
+}
+
+// ─── POST /district/request-access ────────────────────────────────────────────
+// Public. Generates a 6-digit OTP, stores it in district_portals, emails it.
+// Always returns { success: true } — never reveals whether districtId/email exists.
+app.post('/district/request-access', async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Database unavailable' });
+  const { districtId, email } = req.body || {};
+  if (!districtId || !email || !email.includes('@')) {
+    return res.status(400).json({ error: 'districtId and email are required' });
+  }
+  try {
+    const ref  = db.collection('district_portals').doc(String(districtId).trim());
+    const snap = await ref.get();
+    if (snap.exists) {
+      const data = snap.data();
+      if (data.contactEmail && data.contactEmail.toLowerCase() === email.toLowerCase().trim()) {
+        const code   = String(Math.floor(100000 + Math.random() * 900000));
+        const expiry = new Date(Date.now() + 15 * 60 * 1000);
+        await ref.update({ accessCode: code, accessCodeExpiry: expiry });
+        if (process.env.RESEND_API_KEY) {
+          const codeHtml = `
+            <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:520px;margin:0 auto;background:#f9fafb;padding:32px 20px;">
+              <div style="background:linear-gradient(135deg,#6366f1,#4f46e5);border-radius:12px 12px 0 0;padding:28px 32px;text-align:center;">
+                <p style="margin:0 0 4px;color:rgba(255,255,255,0.75);font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">Clarity 360</p>
+                <h1 style="margin:0;color:#fff;font-size:22px;font-weight:800;">Your Access Code</h1>
+              </div>
+              <div style="background:#fff;border-radius:0 0 12px 12px;padding:32px;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+                <p style="margin:0 0 20px;font-size:15px;color:#374151;line-height:1.7;">Hello,<br>Here is your one-time access code for the <strong>${data.districtName || districtId}</strong> Clarity 360 district dashboard:</p>
+                <div style="text-align:center;margin:24px 0;">
+                  <span style="display:inline-block;background:#eef2ff;border:2px solid #c7d2fe;border-radius:12px;padding:18px 36px;font-size:36px;font-weight:900;letter-spacing:0.18em;color:#4338ca;font-family:monospace;">${code}</span>
+                </div>
+                <p style="margin:16px 0 0;font-size:13px;color:#6b7280;text-align:center;">This code expires in <strong>15 minutes</strong>. Do not share it with anyone.</p>
+              </div>
+            </div>`;
+          await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ from: 'Clarity 360 <noreply@clarity360hq.com>', to: [email.trim()], subject: 'Your Clarity 360 Access Code', html: codeHtml }),
+          });
+        } else {
+          log.warn('RESEND_API_KEY not set — district OTP email not sent', { districtId });
+        }
+      }
+    }
+    return res.json({ success: true });
+  } catch (e) {
+    log.error('District request-access error', { error: e.message });
+    return res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// ─── POST /district/verify-access ─────────────────────────────────────────────
+// Public. Verifies OTP, clears it, returns signed JWT on success.
+app.post('/district/verify-access', async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Database unavailable' });
+  const { districtId, email, code } = req.body || {};
+  if (!districtId || !email || !code) {
+    return res.status(400).json({ success: false, error: 'districtId, email, and code are required' });
+  }
+  const FAIL = { success: false, error: 'Invalid or expired code' };
+  try {
+    const ref  = db.collection('district_portals').doc(String(districtId).trim());
+    const snap = await ref.get();
+    if (!snap.exists) return res.status(401).json(FAIL);
+    const data = snap.data();
+    const expiry = data.accessCodeExpiry?.toDate?.() || data.accessCodeExpiry;
+    if (
+      !data.accessCode ||
+      String(data.accessCode) !== String(code).trim() ||
+      (data.contactEmail || '').toLowerCase() !== email.toLowerCase().trim() ||
+      !expiry || new Date() > expiry
+    ) {
+      return res.status(401).json(FAIL);
+    }
+    await ref.update({ accessCode: null, accessCodeExpiry: null });
+    const secret = process.env.AUTH_HMAC_SECRET;
+    if (!secret) { log.error('AUTH_HMAC_SECRET not set'); return res.status(500).json({ error: 'Server misconfiguration' }); }
+    const token = jwtSign({ districtId: districtId.trim(), email: email.trim(), exp: Math.floor(Date.now() / 1000) + 86400 }, secret);
+    log.info('District login success', { districtId });
+    return res.json({ success: true, token });
+  } catch (e) {
+    log.error('District verify-access error', { error: e.message });
+    return res.status(500).json(FAIL);
+  }
+});
+
+// ─── GET /district/:districtId/data ───────────────────────────────────────────
+// JWT-protected. Returns district document (without OTP fields) plus per-role
+// session counts for each deployment's tokenIds.
+app.get('/district/:districtId/data', requireDistrictJWT, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Database unavailable' });
+  const { districtId } = req.params;
+  if (req.districtClaims.districtId !== districtId) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+  try {
+    const snap = await db.collection('district_portals').doc(districtId).get();
+    if (!snap.exists) return res.status(404).json({ error: 'District not found' });
+    const { accessCode, accessCodeExpiry, ...safeData } = snap.data();
+    // Enrich deployments with per-token session counts
+    const deployments = await Promise.all((safeData.deployments || []).map(async dep => {
+      const tokenIds = dep.tokenIds || [];
+      const sessionCounts = {};
+      await Promise.all(tokenIds.map(async tok => {
+        const rSnap = await db.collection('responses')
+          .where('token', '==', tok)
+          .get();
+        const uniqueSessions = new Set(rSnap.docs.map(d => d.data().session_id));
+        sessionCounts[tok] = uniqueSessions.size;
+      }));
+      // Aggregate by role (each token is role-specific; look it up from climate_tokens)
+      const roleCounts = {};
+      await Promise.all(tokenIds.map(async tok => {
+        const tSnap = await db.collection('climate_tokens').where('token', '==', tok).limit(1).get();
+        if (!tSnap.empty) {
+          const role = tSnap.docs[0].data().role;
+          roleCounts[role] = (roleCounts[role] || 0) + (sessionCounts[tok] || 0);
+        }
+      }));
+      return { ...dep, sessionCounts, roleCounts };
+    }));
+    return res.json({ ...safeData, deployments });
+  } catch (e) {
+    log.error('District data fetch error', { error: e.message });
+    return res.status(500).json({ error: 'Failed to fetch district data' });
+  }
+});
+
+// ─── POST /district/portal ─────────────────────────────────────────────────────
+// Admin-protected. Creates a district_portals document.
+app.post('/district/portal', requireAccessKey, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Database unavailable' });
+  const { districtId, districtName, contactEmail } = req.body || {};
+  if (!districtId || !districtName || !contactEmail) {
+    return res.status(400).json({ error: 'districtId, districtName, and contactEmail are required' });
+  }
+  const id = String(districtId).trim().toLowerCase().replace(/[^a-z0-9-]/g, '-');
+  try {
+    const ref  = db.collection('district_portals').doc(id);
+    const snap = await ref.get();
+    if (snap.exists) return res.status(409).json({ error: 'Portal already exists', districtId: id });
+    await ref.set({ districtId: id, districtName: districtName.trim(), contactEmail: contactEmail.trim().toLowerCase(), accessCode: null, accessCodeExpiry: null, createdAt: new Date(), nextDeploymentNote: '', deployments: [], reports: [] });
+    log.info('District portal created', { districtId: id });
+    return res.status(201).json({ status: 'ok', districtId: id });
+  } catch (e) {
+    log.error('District portal creation error', { error: e.message });
+    return res.status(500).json({ error: 'Failed to create portal' });
+  }
+});
+
+// ─── GET /district/portals ─────────────────────────────────────────────────────
+// Admin-protected. Returns all district portals (summary fields only).
+app.get('/district/portals', requireAccessKey, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Database unavailable' });
+  try {
+    const snap = await db.collection('district_portals').get();
+    const portals = snap.docs.map(d => {
+      const { accessCode, accessCodeExpiry, reports, ...summary } = d.data();
+      return summary;
+    });
+    return res.json({ portals });
+  } catch (e) {
+    log.error('District portals list error', { error: e.message });
+    return res.status(500).json({ error: 'Failed to list portals' });
+  }
+});
+
+// ─── POST /district/:districtId/deployment ─────────────────────────────────────
+// Admin-protected. Adds or updates a deployment entry in district_portals.
+app.post('/district/:districtId/deployment', requireAccessKey, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Database unavailable' });
+  const { districtId } = req.params;
+  const { schoolName, schoolId, roles, tokenIds, deploymentId } = req.body || {};
+  try {
+    const ref  = db.collection('district_portals').doc(districtId);
+    const snap = await ref.get();
+    if (!snap.exists) return res.status(404).json({ error: 'District portal not found' });
+    const data      = snap.data();
+    const deployments = data.deployments || [];
+    const depId     = deploymentId || `dep-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    // Find existing active deployment for this school, or create a new one
+    const existingIdx = deployments.findIndex(d => d.schoolId === schoolId && d.status === 'active');
+    if (existingIdx >= 0) {
+      // Merge tokens and roles into existing
+      const existing = deployments[existingIdx];
+      const mergedTokens = [...new Set([...(existing.tokenIds || []), ...(tokenIds || [])])];
+      const mergedRoles  = [...new Set([...(existing.roles  || []), ...(roles  || [])])];
+      deployments[existingIdx] = { ...existing, tokenIds: mergedTokens, roles: mergedRoles };
+    } else {
+      deployments.unshift({ deploymentId: depId, schoolName, schoolId, openedAt: new Date(), closedAt: null, status: 'active', roles: roles || [], tokenIds: tokenIds || [] });
+    }
+    await ref.update({ deployments });
+    log.info('District deployment upserted', { districtId, schoolId, depId });
+    return res.json({ status: 'ok', deploymentId: depId });
+  } catch (e) {
+    log.error('District deployment upsert error', { error: e.message });
+    return res.status(500).json({ error: 'Failed to upsert deployment' });
+  }
+});
+
+// ─── PATCH /district/:districtId/deployment/:deploymentId/close ────────────────
+// Admin-protected. Closes a deployment and emails the superintendent.
+app.patch('/district/:districtId/deployment/:deploymentId/close', requireAccessKey, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Database unavailable' });
+  const { districtId, deploymentId } = req.params;
+  try {
+    const ref  = db.collection('district_portals').doc(districtId);
+    const snap = await ref.get();
+    if (!snap.exists) return res.status(404).json({ error: 'District portal not found' });
+    const data        = snap.data();
+    const deployments = (data.deployments || []).map(d =>
+      d.deploymentId === deploymentId ? { ...d, status: 'closed', closedAt: new Date() } : d
+    );
+    await ref.update({ deployments });
+    // Email superintendent
+    const closed = deployments.find(d => d.deploymentId === deploymentId);
+    if (process.env.RESEND_API_KEY && data.contactEmail) {
+      const closeHtml = `
+        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:540px;margin:0 auto;background:#f9fafb;padding:32px 20px;">
+          <div style="background:linear-gradient(135deg,#6366f1,#4f46e5);border-radius:12px 12px 0 0;padding:28px 32px;">
+            <p style="margin:0 0 4px;color:rgba(255,255,255,0.75);font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">Clarity 360</p>
+            <h1 style="margin:0;color:#fff;font-size:22px;font-weight:800;">Your Deployment Has Closed</h1>
+          </div>
+          <div style="background:#fff;border-radius:0 0 12px 12px;padding:32px;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+            <p style="font-size:15px;color:#374151;line-height:1.7;">Data collection for <strong>${closed?.schoolName || 'your school'}</strong> is now complete. Our team is reviewing the responses.</p>
+            <p style="font-size:15px;color:#374151;line-height:1.7;">Your reports will be available in the <a href="https://clarity360hq.com/district/${districtId}" style="color:#4f46e5;">district dashboard</a> within <strong>1–2 weeks</strong>.</p>
+            <p style="font-size:13px;color:#6b7280;">Questions? Contact <a href="mailto:knoell@engagingpd.com" style="color:#4f46e5;">knoell@engagingpd.com</a></p>
+          </div>
+        </div>`;
+      await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from: 'Clarity 360 <noreply@clarity360hq.com>', to: [data.contactEmail], subject: 'Your Clarity 360 Deployment Has Closed — Reports Coming Soon', html: closeHtml }),
+      });
+    }
+    log.info('District deployment closed', { districtId, deploymentId });
+    return res.json({ status: 'ok' });
+  } catch (e) {
+    log.error('District deployment close error', { error: e.message });
+    return res.status(500).json({ error: 'Failed to close deployment' });
+  }
+});
+
+// ─── POST /district/:districtId/welcome-email ──────────────────────────────────
+// Admin-protected. Sends a welcome email to the superintendent.
+app.post('/district/:districtId/welcome-email', requireAccessKey, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Database unavailable' });
+  const { districtId } = req.params;
+  if (!process.env.RESEND_API_KEY) return res.status(503).json({ error: 'RESEND_API_KEY not set' });
+  try {
+    const snap = await db.collection('district_portals').doc(districtId).get();
+    if (!snap.exists) return res.status(404).json({ error: 'District portal not found' });
+    const data    = snap.data();
+    const dashUrl = `https://clarity360hq.com/district/${districtId}`;
+    const welcomeHtml = `
+      <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:560px;margin:0 auto;background:#f9fafb;padding:32px 20px;">
+        <div style="background:linear-gradient(135deg,#6366f1,#4f46e5);border-radius:12px 12px 0 0;padding:28px 32px;">
+          <p style="margin:0 0 4px;color:rgba(255,255,255,0.75);font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">Clarity 360</p>
+          <h1 style="margin:0;color:#fff;font-size:22px;font-weight:800;">Your District Dashboard is Ready</h1>
+        </div>
+        <div style="background:#fff;border-radius:0 0 12px 12px;padding:32px;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+          <p style="font-size:15px;color:#374151;line-height:1.7;">Hello,<br>Your Clarity 360 district dashboard for <strong>${data.districtName}</strong> is now active.</p>
+          <p style="font-size:15px;color:#374151;line-height:1.7;">You can view deployment status, participation rates, and reports at any time:</p>
+          <div style="text-align:center;margin:24px 0;">
+            <a href="${dashUrl}" style="display:inline-block;background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;text-decoration:none;padding:14px 32px;border-radius:50px;font-size:15px;font-weight:800;box-shadow:0 6px 18px rgba(99,102,241,0.35);">
+              Access Your Dashboard →
+            </a>
+          </div>
+          <p style="font-size:14px;color:#374151;line-height:1.7;"><strong>How to log in:</strong><br>Visit the link above, enter your email address, and we will send you a one-time access code. No password needed.</p>
+          <p style="font-size:13px;color:#6b7280;margin-top:24px;">Questions? Contact <a href="mailto:knoell@engagingpd.com" style="color:#4f46e5;">knoell@engagingpd.com</a></p>
+        </div>
+      </div>`;
+    const emailRes = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: 'Clarity 360 <noreply@clarity360hq.com>', to: [data.contactEmail], subject: 'Your Clarity 360 District Dashboard is Ready', html: welcomeHtml }),
+    });
+    const emailData = await emailRes.json();
+    if (!emailRes.ok) return res.status(502).json({ error: 'Email send failed', detail: emailData });
+    log.info('District welcome email sent', { districtId, to: data.contactEmail });
+    return res.json({ status: 'ok' });
+  } catch (e) {
+    log.error('District welcome email error', { error: e.message });
+    return res.status(500).json({ error: 'Failed to send welcome email' });
+  }
+});
+
 // ─── School Climate: Token Lookup ─────────────────────────────────────────────
 // GET /school-climate/token/:token
 // Public endpoint — no access key required (called by the interview page before auth)
@@ -2902,6 +3265,8 @@ app.post('/school-climate/tokens', requireAccessKey, async (req, res) => {
 // Sends a role-specific survey invitation email to a recipient. Includes the
 // full question list so participants can review before starting.
 app.post('/school-climate/send-deployment-email', requireAccessKey, async (req, res) => {
+  console.log('RESEND_API_KEY present:', !!process.env.RESEND_API_KEY);
+  console.log('RESEND_API_KEY length:', process.env.RESEND_API_KEY?.length);
   const { role, token, school_name, recipient_email } = req.body;
 
   const validRoles = ['students', 'teachers', 'staff', 'parents'];
@@ -2915,7 +3280,8 @@ app.post('/school-climate/send-deployment-email', requireAccessKey, async (req, 
     return res.status(400).json({ error: 'Valid recipient_email is required' });
   }
   if (!process.env.RESEND_API_KEY) {
-    return res.status(503).json({ error: 'Email not configured on this server' });
+    console.error('[school-climate/send-deployment-email] RESEND_API_KEY is not set — cannot send email');
+    return res.status(503).json({ error: 'RESEND_API_KEY environment variable is not set on this server' });
   }
 
   const ROLE_LABELS = { students: 'Student', teachers: 'Teacher', staff: 'Staff', parents: 'Parent' };
