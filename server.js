@@ -3103,7 +3103,7 @@ app.patch('/district/:districtId/deployment/:deploymentId/close', requireAccessK
           <div style="background:#fff;border-radius:0 0 12px 12px;padding:32px;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
             <p style="font-size:15px;color:#374151;line-height:1.7;">Data collection for <strong>${closed?.schoolName || 'your school'}</strong> is now complete. Our team is reviewing the responses.</p>
             <p style="font-size:15px;color:#374151;line-height:1.7;">Your reports will be available in the <a href="https://clarity360hq.com/district/${districtId}" style="color:#4f46e5;">district dashboard</a> within <strong>1–2 weeks</strong>.</p>
-            <p style="font-size:13px;color:#6b7280;">Questions? Contact <a href="mailto:knoell@engagingpd.com" style="color:#4f46e5;">knoell@engagingpd.com</a></p>
+            <p style="font-size:13px;color:#6b7280;">Questions? Contact <a href="mailto:knoell@engagingpd.com" style="color:#4f46e5;">Dr. Christopher M. Knoell</a></p>
           </div>
         </div>`;
       await fetch('https://api.resend.com/emails', {
@@ -3146,7 +3146,7 @@ app.post('/district/:districtId/welcome-email', requireAccessKey, async (req, re
             </a>
           </div>
           <p style="font-size:14px;color:#374151;line-height:1.7;"><strong>How to log in:</strong><br>Visit the link above, enter your email address, and we will send you a one-time access code. No password needed.</p>
-          <p style="font-size:13px;color:#6b7280;margin-top:24px;">Questions? Contact <a href="mailto:knoell@engagingpd.com" style="color:#4f46e5;">knoell@engagingpd.com</a></p>
+          <p style="font-size:13px;color:#6b7280;margin-top:24px;">Questions? Contact <a href="mailto:knoell@engagingpd.com" style="color:#4f46e5;">Dr. Christopher M. Knoell</a></p>
         </div>
       </div>`;
     const emailRes = await fetch('https://api.resend.com/emails', {
@@ -3161,6 +3161,42 @@ app.post('/district/:districtId/welcome-email', requireAccessKey, async (req, re
   } catch (e) {
     log.error('District welcome email error', { error: e.message });
     return res.status(500).json({ error: 'Failed to send welcome email' });
+  }
+});
+
+// ─── POST /district/:districtId/report ────────────────────────────────────────
+// Admin-protected. Appends a generated report to district_portals.reports[].
+// Body: { deploymentId, type: 'brief'|'detailed', content, available }
+app.post('/district/:districtId/report', requireAccessKey, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Database unavailable' });
+  const { districtId } = req.params;
+  const { deploymentId, type, content, available } = req.body || {};
+  if (!content || typeof content !== 'string') {
+    return res.status(400).json({ error: 'content is required' });
+  }
+  if (!['brief', 'detailed'].includes(type)) {
+    return res.status(400).json({ error: 'type must be "brief" or "detailed"' });
+  }
+  try {
+    const ref  = db.collection('district_portals').doc(districtId);
+    const snap = await ref.get();
+    if (!snap.exists) return res.status(404).json({ error: 'District portal not found' });
+    const data    = snap.data();
+    const reports = data.reports || [];
+    const reportEntry = {
+      deploymentId: deploymentId || null,
+      type,
+      generatedAt: new Date().toISOString(),
+      content,
+      available: available !== false,
+    };
+    reports.unshift(reportEntry); // newest first
+    await ref.update({ reports });
+    log.info('Report saved to district portal', { districtId, type, deploymentId });
+    return res.json({ status: 'ok', report: reportEntry });
+  } catch (e) {
+    log.error('District report save error', { error: e.message });
+    return res.status(500).json({ error: 'Failed to save report to portal' });
   }
 });
 
@@ -3446,7 +3482,7 @@ app.post('/school-climate/send-deployment-email', requireAccessKey, async (req, 
         <tr>
           <td style="background:#f8fafc;padding:24px 48px;border-top:1px solid #e0e7ff;">
             <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#94a3b8;">
-              This invitation was sent via Clarity 360. Questions? Contact <a href="mailto:knoell@engagingpd.com" style="color:#6366f1;text-decoration:none;">knoell@engagingpd.com</a>.
+              This invitation was sent via Clarity 360. Questions? Contact <a href="mailto:knoell@engagingpd.com" style="color:#6366f1;text-decoration:none;">Dr. Christopher M. Knoell</a>.
             </p>
           </td>
         </tr>
@@ -4130,7 +4166,7 @@ app.get('/api/renewedtude/verify-session', async (req, res) => {
             <hr style="border:none;border-top:1px solid #333;margin:0 0 24px;" />
             <p style="margin:0;font-size:13px;color:#666;line-height:1.6;">
               Questions? Reply to this email or contact us at
-              <a href="mailto:knoell@engagingpd.com" style="color:#e8a09a;text-decoration:none;">knoell@engagingpd.com</a>.
+              <a href="mailto:knoell@engagingpd.com" style="color:#e8a09a;text-decoration:none;">Dr. Christopher M. Knoell</a>.
             </p>
           </td>
         </tr>
