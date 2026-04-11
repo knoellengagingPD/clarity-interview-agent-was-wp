@@ -517,6 +517,7 @@ app.post(
       if (req.body.district) doc.district = String(req.body.district).trim();
       if (req.body.domain) doc.domain = String(req.body.domain).slice(0, 32);
       if (req.body.token) doc.token = String(req.body.token).slice(0, 20);
+      if (req.body.response_mode === 'text') doc.response_mode = 'text';
     }
 
     try {
@@ -3018,12 +3019,35 @@ app.post('/district/portal', requireAccessKey, async (req, res) => {
     const ref  = db.collection('district_portals').doc(id);
     const snap = await ref.get();
     if (snap.exists) return res.status(409).json({ error: 'Portal already exists', districtId: id });
-    await ref.set({ districtId: id, districtName: districtName.trim(), contactEmail: contactEmail.trim().toLowerCase(), accessCode: null, accessCodeExpiry: null, createdAt: new Date(), nextDeploymentNote: '', deployments: [], reports: [] });
+    await ref.set({ districtId: id, districtName: districtName.trim(), contactEmail: contactEmail.trim().toLowerCase(), accessCode: null, accessCodeExpiry: null, createdAt: new Date(), nextDeploymentNote: '', deployments: [], reports: [], textFallbackEnabled: false });
     log.info('District portal created', { districtId: id });
     return res.status(201).json({ status: 'ok', districtId: id });
   } catch (e) {
     log.error('District portal creation error', { error: e.message });
     return res.status(500).json({ error: 'Failed to create portal' });
+  }
+});
+
+// ─── PATCH /district/:id/portal ───────────────────────────────────────────────
+// Admin-protected. Updates mutable fields on a district portal.
+// Currently supports: textFallbackEnabled (boolean).
+app.patch('/district/:districtId/portal', requireAccessKey, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Database unavailable' });
+  const { districtId } = req.params;
+  const { textFallbackEnabled } = req.body || {};
+  if (typeof textFallbackEnabled !== 'boolean') {
+    return res.status(400).json({ error: 'textFallbackEnabled (boolean) is required' });
+  }
+  try {
+    const ref = db.collection('district_portals').doc(districtId.trim());
+    const snap = await ref.get();
+    if (!snap.exists) return res.status(404).json({ error: 'Portal not found' });
+    await ref.update({ textFallbackEnabled });
+    log.info('District portal updated', { districtId, textFallbackEnabled });
+    return res.json({ status: 'ok', districtId, textFallbackEnabled });
+  } catch (e) {
+    log.error('District portal update error', { error: e.message });
+    return res.status(500).json({ error: 'Failed to update portal' });
   }
 });
 
@@ -3224,11 +3248,27 @@ app.get('/school-climate/token/:token', async (req, res) => {
       return res.status(404).json({ error: 'Token has expired or been deactivated' });
     }
 
+    // Look up district portal to get textFallbackEnabled setting
+    let textFallbackEnabled = false;
+    if (data.district && db) {
+      try {
+        const districtSlug = String(data.district).trim().toLowerCase()
+          .replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-');
+        const portalSnap = await db.collection('district_portals').doc(districtSlug).get();
+        if (portalSnap.exists) {
+          textFallbackEnabled = portalSnap.data().textFallbackEnabled === true;
+        }
+      } catch (_) {
+        // Non-fatal — default stays false
+      }
+    }
+
     return res.json({
       role: data.role,
       school_name: data.school_name,
       school_id: data.school_id,
       district: data.district,
+      textFallbackEnabled,
     });
   } catch (e) {
     log.error('Climate token lookup failed', { error: e.message });
@@ -3634,8 +3674,11 @@ app.get('/school-climate/sessions', requireAccessKey, async (req, res) => {
           district: doc.district || null,
           ts: doc.ts,
           ratings: {},
+          response_mode: null,
         };
       }
+      // Mark session as text-mode if any doc has response_mode: 'text'
+      if (doc.response_mode === 'text') rd.sessions[sid].response_mode = 'text';
 
       // Accumulate scores only for rated questions
       if (doc.question_id && doc.rating !== undefined && doc.rating !== null) {
