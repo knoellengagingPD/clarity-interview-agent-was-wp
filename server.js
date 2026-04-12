@@ -3699,12 +3699,19 @@ app.get('/school-climate/sessions', requireAccessKey, async (req, res) => {
         }
       }
 
-      // Collect Dream Big open-ended text responses
-      if (doc.domain === 'dream_big' && doc.followup_text &&
+      // Collect Dream Big open-ended text responses.
+      // Voice survey sends domain 'dream_big'; text mode / seeders may send 'open'.
+      if ((doc.domain === 'dream_big' || doc.domain === 'open') && doc.followup_text &&
           doc.followup_text.trim() && doc.followup_text.trim() !== '[skipped]') {
         rd.open_responses.push(doc.followup_text.trim());
       }
     }
+
+    // Log open-ended response counts for debugging
+    const openDebug = Object.entries(byRole)
+      .map(([r, rd]) => `${r}: ${rd.open_responses.length}`)
+      .join(', ');
+    log.info('Climate stats: open-ended responses collected', { school_id, counts: openDebug });
 
     // Build final response
     const data = {};
