@@ -3660,6 +3660,7 @@ app.get('/school-climate/sessions', requireAccessKey, async (req, res) => {
           domain_totals: {},
           domain_counts: {},
           total_rated_responses: 0,
+          open_responses: [],
         };
       }
       const rd = byRole[docRole];
@@ -3697,6 +3698,12 @@ app.get('/school-climate/sessions', requireAccessKey, async (req, res) => {
           rd.total_rated_responses++;
         }
       }
+
+      // Collect Dream Big open-ended text responses
+      if (doc.domain === 'dream_big' && doc.followup_text &&
+          doc.followup_text.trim() && doc.followup_text.trim() !== '[skipped]') {
+        rd.open_responses.push(doc.followup_text.trim());
+      }
     }
 
     // Build final response
@@ -3715,6 +3722,7 @@ app.get('/school-climate/sessions', requireAccessKey, async (req, res) => {
         total_rated_responses: rd.total_rated_responses,
         question_averages,
         domain_averages,
+        open_responses: rd.open_responses,
         sessions: Object.values(rd.sessions).sort((a, b) => (b.ts || '').localeCompare(a.ts || '')),
       };
     }
