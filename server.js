@@ -317,6 +317,8 @@ const corsOptions = {
       'https://administrators.clarity360hq.com',
       'https://schoolclimate.clarity360hq.com',
       'https://clarity360hq.com',
+      'https://engagingpurpose.com',
+      'https://www.engagingpurpose.com',
       'http://localhost:3000',
       'http://localhost:3001'
     ];
