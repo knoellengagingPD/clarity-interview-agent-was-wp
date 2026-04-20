@@ -4310,6 +4310,78 @@ app.get('/api/renewedtude/verify-token', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// CLARITY WORKPLACE — isolated endpoints (new product, new collections)
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/workplace/log_response', async (req, res) => {
+  try {
+    if (req.headers['x-clarity-key'] !== process.env.CLARITY_KEY) {
+      return res.status(401).json({ error: 'unauthorized' });
+    }
+    const { session_id, section, question_id, domain, organization,
+      department, organization_id, token, rating, followup_text, response_mode } = req.body || {};
+    if (!session_id || !question_id) {
+      return res.status(400).json({ error: 'missing session_id or question_id' });
+    }
+    const doc = {
+      session_id: String(session_id),
+      section: section || 'workplace_climate',
+      question_id: String(question_id),
+      domain: domain || '',
+      organization: organization || '',
+      department: department || '',
+      organization_id: organization_id || '',
+      token: token || '',
+      rating: rating == null ? '' : String(rating),
+      followup_text: (followup_text || '').toString().substring(0, 2000),
+      response_mode: response_mode || 'voice',
+      created_at: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    await admin.firestore().collection('workplace_climate').add(doc);
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('workplace log_response failed:', err);
+    return res.status(500).json({ error: 'log failed' });
+  }
+});
+
+async function wrkValidateWorkplaceToken(rawToken) {
+  const token = String(rawToken || '').trim().toUpperCase();
+  if (!/^WRK-[A-Z0-9]+$/.test(token)) {
+    return { valid: false, reason: 'Invalid token format.' };
+  }
+  const snap = await admin.firestore().collection('workplace_tokens').doc(token).get();
+  if (!snap.exists) {
+    return { valid: false, reason: 'Token not found.' };
+  }
+  const data = snap.data() || {};
+  if (data.active === false || data.revoked === true) {
+    return { valid: false, reason: 'This token has been deactivated.' };
+  }
+  return {
+    valid: true,
+    organizationId: data.organizationId || '',
+    organizationName: data.organizationName || '',
+    department: data.department || '',
+  };
+}
+
+app.get('/workplace/validate-token/:token', async (req, res) => {
+  try {
+    const result = await wrkValidateWorkplaceToken(req.params.token);
+    if (!result.valid) {
+      return res.status(404).json({
+        valid: false, organizationId: '', organizationName: '', department: '',
+        error: result.reason,
+      });
+    }
+    return res.json(result);
+  } catch (err) {
+    console.error('workplace validate-token failed:', err);
+    return res.status(500).json({ valid: false, error: 'validation failed' });
+  }
+});
+
 // ─── 404 & Error Handlers ─────────────────────────────────────────────────────
 app.use((req, res) => {
   res.status(404).json({ error: 'Not found' });
