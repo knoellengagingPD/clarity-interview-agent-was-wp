@@ -4382,6 +4382,219 @@ app.get('/workplace/validate-token/:token', async (req, res) => {
   }
 });
 
+// ─── Workplace Climate: Create Token ──────────────────────────────────────────
+// POST /workplace/tokens
+// Requires x-clarity-key. Body: { organization_name, organization_id, department, is_test }.
+// Generates unique WRK-XXXXXX and stores it in workplace_tokens (doc id = token).
+app.post('/workplace/tokens', async (req, res) => {
+  if (req.headers['x-clarity-key'] !== process.env.CLARITY_KEY) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  try {
+    const { organization_name, organization_id, department, is_test } = req.body || {};
+    if (!organization_name || typeof organization_name !== 'string') {
+      return res.status(400).json({ error: 'organization_name is required' });
+    }
+    if (!organization_id || typeof organization_id !== 'string') {
+      return res.status(400).json({ error: 'organization_id is required' });
+    }
+    if (department && typeof department !== 'string') {
+      return res.status(400).json({ error: 'department must be a string' });
+    }
+
+    // Generate a unique WRK-XXXXXX token (omit easily-confused chars)
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let token;
+    let attempts = 0;
+    do {
+      const rand = Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+      token = `WRK-${rand}`;
+      const existing = await admin.firestore().collection('workplace_tokens').doc(token).get();
+      if (!existing.exists) break;
+      attempts++;
+    } while (attempts < 10);
+
+    if (attempts >= 10) {
+      return res.status(500).json({ error: 'Could not generate a unique token. Please try again.' });
+    }
+
+    const doc = {
+      token,
+      organizationName: organization_name.trim(),
+      organizationId: organization_id.trim(),
+      department: (department || '').trim(),
+      is_test: is_test === true,
+      active: true,
+      created_at: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    await admin.firestore().collection('workplace_tokens').doc(token).set(doc);
+    log.info('Workplace token created', { token, organization_id });
+    return res.status(201).json({
+      status: 'ok',
+      id: token,
+      token,
+      organizationName: doc.organizationName,
+      organizationId: doc.organizationId,
+      department: doc.department,
+      is_test: doc.is_test,
+      active: true,
+      created_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    log.error('Workplace token creation failed', { error: err.message });
+    return res.status(500).json({ error: 'Failed to create token' });
+  }
+});
+
+// ─── Workplace Climate: Stats & Sessions ──────────────────────────────────────
+// GET /workplace/stats?organization_id=&start_date=&end_date=&hide_test=
+// Requires x-clarity-key. Queries workplace_climate collection, groups by session_id,
+// and computes per-question / per-domain averages using a label→numeric scale map.
+const WP_SCALE_MAP = {
+  'strongly disagree': 1, 'somewhat disagree': 2, 'somewhat agree': 3, 'strongly agree': 4,
+  'not at all prepared': 1, 'slightly prepared': 2, 'somewhat prepared': 3, 'very prepared': 4,
+  'not at all satisfied': 1, 'not too satisfied': 2, 'somewhat satisfied': 3, 'very satisfied': 4,
+  'very unsafe': 1, 'somewhat unsafe': 2, 'somewhat safe': 3, 'very safe': 4,
+  'never': 1, 'rarely': 2, 'sometimes': 3, 'often': 4,
+};
+const WP_DOMAIN_MAP = {
+  Q1: 'work_demands_engagement', Q2: 'work_demands_engagement', Q3: 'work_demands_engagement',
+  Q4: 'organizational_support',  Q5: 'organizational_support',  Q6: 'organizational_support', Q7: 'organizational_support',
+  Q8: 'work_life_balance',       Q9: 'work_life_balance',
+  Q10: 'health_wellbeing',       Q11: 'health_wellbeing',
+  Q12: 'culture_belonging',      Q13: 'culture_belonging',      Q14: 'culture_belonging', Q15: 'culture_belonging',
+  AIR1: 'ai_readiness',
+  DB1: 'dream_big', DB2: 'dream_big', DB3: 'dream_big',
+};
+const WP_RATED_QUESTIONS = 16;
+
+app.get('/workplace/stats', async (req, res) => {
+  if (req.headers['x-clarity-key'] !== process.env.CLARITY_KEY) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  try {
+    const { organization_id, start_date, end_date, hide_test } = req.query;
+    if (!organization_id) {
+      return res.status(400).json({ error: 'organization_id query param is required' });
+    }
+    const shouldHideTest = hide_test === 'true';
+
+    // Fetch responses for this organization (single-field where to avoid composite index)
+    const snap = await admin.firestore().collection('workplace_climate')
+      .where('organization_id', '==', String(organization_id))
+      .get();
+
+    // Resolve test-token set if hide_test requested
+    let testTokenSet = new Set();
+    if (shouldHideTest) {
+      try {
+        const tokSnap = await admin.firestore().collection('workplace_tokens')
+          .where('organizationId', '==', String(organization_id))
+          .get();
+        tokSnap.docs.forEach(d => {
+          const dd = d.data() || {};
+          if (dd.is_test === true) testTokenSet.add(dd.token || d.id);
+        });
+      } catch (e) {
+        log.warn('Workplace test-token lookup failed', { error: e.message });
+      }
+    }
+
+    // Date-range bounds — compare against created_at (Firestore Timestamp)
+    const startMs = start_date ? new Date(start_date).getTime() : null;
+    const endMs = end_date ? (() => { const d = new Date(end_date); d.setDate(d.getDate() + 1); return d.getTime(); })() : null;
+
+    // Group by session
+    const sessions = {};
+    const questionTotals = {};
+    const questionCounts = {};
+    const domainTotals = {};
+    const domainCounts = {};
+    const openResponses = [];
+    let totalRated = 0;
+
+    snap.docs.forEach(d => {
+      const doc = d.data() || {};
+      if (shouldHideTest && doc.token && testTokenSet.has(doc.token)) return;
+
+      const createdMs = doc.created_at && doc.created_at.toMillis ? doc.created_at.toMillis() : null;
+      if (startMs && createdMs && createdMs < startMs) return;
+      if (endMs && createdMs && createdMs > endMs) return;
+
+      const sid = doc.session_id || 'unknown';
+      if (!sessions[sid]) {
+        sessions[sid] = {
+          session_id: sid,
+          organization: doc.organization || '',
+          organization_id: doc.organization_id || '',
+          department: doc.department || '',
+          ts: createdMs ? new Date(createdMs).toISOString() : null,
+          ratings: {},
+          response_mode: null,
+        };
+      }
+      if (doc.response_mode === 'text') sessions[sid].response_mode = 'text';
+
+      const qid = doc.question_id ? String(doc.question_id) : '';
+      const ratingLabel = doc.rating != null ? String(doc.rating).trim().toLowerCase() : '';
+      const numeric = WP_SCALE_MAP[ratingLabel];
+      if (qid && numeric != null) {
+        sessions[sid].ratings[qid] = numeric;
+        questionTotals[qid] = (questionTotals[qid] || 0) + numeric;
+        questionCounts[qid] = (questionCounts[qid] || 0) + 1;
+        const dom = WP_DOMAIN_MAP[qid] || doc.domain || 'other';
+        domainTotals[dom] = (domainTotals[dom] || 0) + numeric;
+        domainCounts[dom] = (domainCounts[dom] || 0) + 1;
+        totalRated++;
+      }
+
+      // Collect open-ended responses from dream_big + ai_readiness domains
+      if ((doc.domain === 'dream_big' || doc.domain === 'ai_readiness') && doc.followup_text &&
+          doc.followup_text.trim() && doc.followup_text.trim() !== '[skipped]') {
+        openResponses.push(doc.followup_text.trim());
+      }
+    });
+
+    // Bucket sessions by completion
+    const sessionList = Object.values(sessions);
+    let completeCount = 0, partialCount = 0, incompleteCount = 0;
+    for (const s of sessionList) {
+      const answered = Object.keys(s.ratings).length;
+      const ratio = WP_RATED_QUESTIONS > 0 ? answered / WP_RATED_QUESTIONS : 0;
+      if (ratio >= 0.67) completeCount++;
+      else if (ratio >= 0.34) partialCount++;
+      else incompleteCount++;
+    }
+
+    // Build averages
+    const question_averages = {};
+    for (const qid of Object.keys(questionTotals)) {
+      question_averages[qid] = Math.round((questionTotals[qid] / questionCounts[qid]) * 100) / 100;
+    }
+    const domain_averages = {};
+    for (const dom of Object.keys(domainTotals)) {
+      domain_averages[dom] = Math.round((domainTotals[dom] / domainCounts[dom]) * 100) / 100;
+    }
+
+    return res.json({
+      organization_id: String(organization_id),
+      total_sessions: sessionList.length,
+      complete_sessions: completeCount,
+      partial_sessions: partialCount,
+      incomplete_sessions: incompleteCount,
+      total_rated_responses: totalRated,
+      question_averages,
+      domain_averages,
+      open_responses: openResponses,
+      sessions: sessionList.sort((a, b) => (b.ts || '').localeCompare(a.ts || '')),
+    });
+  } catch (err) {
+    log.error('Workplace stats fetch failed', { error: err.message });
+    return res.status(500).json({ error: 'Failed to fetch workplace stats', detail: err.message });
+  }
+});
+
 // ─── 404 & Error Handlers ─────────────────────────────────────────────────────
 app.use((req, res) => {
   res.status(404).json({ error: 'Not found' });
