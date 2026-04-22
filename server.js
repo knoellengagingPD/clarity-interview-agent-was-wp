@@ -4549,10 +4549,15 @@ app.get('/workplace/stats', async (req, res) => {
         totalRated++;
       }
 
-      // Collect open-ended responses from dream_big + ai_readiness domains
+      // Collect open-ended responses from dream_big + ai_readiness domains.
+      // Tag each with domain + question_id so the report can split sections.
       if ((doc.domain === 'dream_big' || doc.domain === 'ai_readiness') && doc.followup_text &&
           doc.followup_text.trim() && doc.followup_text.trim() !== '[skipped]') {
-        openResponses.push(doc.followup_text.trim());
+        openResponses.push({
+          text: doc.followup_text.trim(),
+          domain: doc.domain,
+          question_id: qid || '',
+        });
       }
     });
 
