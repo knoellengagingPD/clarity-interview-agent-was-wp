@@ -4386,10 +4386,7 @@ app.get('/workplace/validate-token/:token', async (req, res) => {
 // POST /workplace/tokens
 // Requires x-clarity-key. Body: { organization_name, organization_id, department, is_test }.
 // Generates unique WRK-XXXXXX and stores it in workplace_tokens (doc id = token).
-app.post('/workplace/tokens', async (req, res) => {
-  if (req.headers['x-clarity-key'] !== process.env.CLARITY_KEY) {
-    return res.status(401).json({ error: 'unauthorized' });
-  }
+app.post('/workplace/tokens', requireAccessKey, async (req, res) => {
   try {
     const { organization_name, organization_id, department, is_test } = req.body || {};
     if (!organization_name || typeof organization_name !== 'string') {
@@ -4469,10 +4466,7 @@ const WP_DOMAIN_MAP = {
 };
 const WP_RATED_QUESTIONS = 16;
 
-app.get('/workplace/stats', async (req, res) => {
-  if (req.headers['x-clarity-key'] !== process.env.CLARITY_KEY) {
-    return res.status(401).json({ error: 'unauthorized' });
-  }
+app.get('/workplace/stats', requireAccessKey, async (req, res) => {
   try {
     const { organization_id, start_date, end_date, hide_test } = req.query;
     if (!organization_id) {
