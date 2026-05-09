@@ -4669,7 +4669,7 @@ app.post('/api/generate-quantitative-report', requireAccessKey, async (req, res)
       if (!qid) continue;
       const rating = Number(doc.rating);
       if (isNaN(rating)) continue;
-      const domain = qid.includes('_') ? qid.split('_')[0] : 'other';
+      const domain = getDomain(qid);
       if (!questionBuckets[qid]) questionBuckets[qid] = { ratings: [], domain };
       questionBuckets[qid].ratings.push(rating);
     }
@@ -4687,19 +4687,94 @@ app.post('/api/generate-quantitative-report', requireAccessKey, async (req, res)
       return { n, mean, min, max, std_dev };
     }
 
-    // ── 6. Question text lookup ───────────────────────────────────────────────
-    // Parses the trailing number from qid (e.g. 'safety_3' → 3) and resolves
-    // CLIMATE_QUESTIONS[role][n].text. Falls back to the raw qid string.
+    // ── 6. Question text + domain lookup ─────────────────────────────────────
+    const QUESTION_TEXT_MAP = {
+      // Students
+      S1: 'I feel safe at this school.',
+      S2: 'Students treat each other with respect.',
+      S3: 'Adults at this school treat students with respect.',
+      S4: 'I feel comfortable telling an adult if something feels unsafe.',
+      E1: 'I feel like I belong at this school.',
+      E2: 'Teachers care about how I am doing.',
+      E3: 'I have at least one adult at school I can talk to if I have a problem.',
+      E4: 'My ideas and opinions matter at this school.',
+      E5: 'I try my best to do well in school.',
+      E6: 'Learning at this school is interesting to me.',
+      EN1: 'My school is clean and well cared for.',
+      EN2: 'I have the materials and supplies I need to learn.',
+      EN3: 'Students from different backgrounds are respected at this school.',
+      EN4: 'This school helps me learn and grow.',
+      // Teachers
+      TS1: 'I feel safe at this school.',
+      TS2: 'Students treat each other with respect.',
+      TS3: 'Students treat staff with respect.',
+      TS4: 'Staff address bullying and harassment promptly.',
+      TS5: 'I feel comfortable raising safety concerns with school leadership.',
+      TE1: 'I feel valued as a professional at this school.',
+      TE2: 'School leadership supports my growth and development.',
+      TE3: 'I have the autonomy to make meaningful decisions in my classroom.',
+      TE4: 'There is open and honest communication among staff.',
+      TE5: 'I am recognized for my contributions to this school.',
+      TE6: 'I feel a sense of belonging in this school community.',
+      TEN1: 'I consistently have enough emotional energy to meet the demands of my students and colleagues.',
+      TEN2: 'The school building and grounds are clean and well maintained.',
+      TEN3: 'I have the materials and supplies I need to do my job well.',
+      TEN4: 'Class sizes allow me to meet the needs of my students.',
+      TEN5: 'Physical conditions at this school support effective teaching and learning.',
+      AIR1: 'How prepared do you feel your school is to thoughtfully integrate Artificial Intelligence and AI tools into teaching and learning?',
+      // Staff
+      SS1: 'I feel safe at this school.',
+      SS2: 'Students treat staff with respect.',
+      SS3: 'Staff address bullying and harassment promptly.',
+      SS4: 'I feel comfortable raising safety concerns with school leadership.',
+      SS5: 'The rules for student behavior are clear and consistently enforced.',
+      SE1: 'I feel valued as a member of this school\'s team.',
+      SE2: 'School leadership treats all staff with respect.',
+      SE3: 'I feel a sense of belonging in this school community.',
+      SE4: 'My contributions to this school are recognized.',
+      SE5: 'There is open and honest communication among staff.',
+      SEN1: 'The school building and grounds are clean and well maintained.',
+      SEN2: 'I have the tools and resources I need to do my job well.',
+      SEN3: 'Physical conditions at this school support my ability to do my job.',
+      SEN4: 'Staff work together to create a positive environment for students.',
+      SEN5: 'This school is a welcoming place for students of all backgrounds.',
+      // Parents
+      PS1: 'My child feels safe at school.',
+      PS2: 'Teachers and staff treat students with respect.',
+      PS3: 'The rules for student behavior are fair.',
+      PS4: 'The school deals effectively with bullying.',
+      PS5: 'I feel comfortable reporting safety concerns to school staff.',
+      PE1: 'I feel welcome at my child\'s school.',
+      PE2: 'The teachers at this school care about my child.',
+      PE3: 'The school keeps me informed about my child\'s academic progress.',
+      PE4: 'School staff respond promptly to my questions and concerns.',
+      PE5: 'I have opportunities to share my opinions about school decisions.',
+      PE6: 'My child\'s teachers have high expectations for my child.',
+      PE7: 'Students from different backgrounds are respected at this school.',
+      PEN1: 'My child has access to the resources needed to succeed at school.',
+      PEN2: 'Teachers give my child feedback that helps them learn.',
+      PEN3: 'This school is a welcoming place for students of all backgrounds.',
+    };
+
     function getQuestionText(qid) {
-      const roleQs = CLIMATE_QUESTIONS[role];
-      if (roleQs) {
-        const n = parseInt(qid.split('_').pop(), 10);
-        if (!isNaN(n)) {
-          const q = roleQs.find(item => item.n === n && !item.open);
-          if (q) return q.text;
-        }
-      }
-      return qid;
+      return QUESTION_TEXT_MAP[qid] || qid;
+    }
+
+    function getDomain(qid) {
+      if (qid.startsWith('TEN')) return 'environment';
+      if (qid.startsWith('TE'))  return 'engagement';
+      if (qid.startsWith('TS'))  return 'safety';
+      if (qid.startsWith('AIR')) return 'ai_readiness';
+      if (qid.startsWith('SEN')) return 'environment';
+      if (qid.startsWith('SE'))  return 'engagement';
+      if (qid.startsWith('SS'))  return 'safety';
+      if (qid.startsWith('PEN')) return 'environment';
+      if (qid.startsWith('PE'))  return 'engagement';
+      if (qid.startsWith('PS'))  return 'safety';
+      if (qid.startsWith('EN'))  return 'environment';
+      if (qid.startsWith('E'))   return 'engagement';
+      if (qid.startsWith('S'))   return 'safety';
+      return 'other';
     }
 
     // ── 7. Domain grouping ────────────────────────────────────────────────────
@@ -4713,10 +4788,10 @@ app.post('/api/generate-quantitative-report', requireAccessKey, async (req, res)
 
     // Sort qids: by domain order first, then by numeric suffix
     const sortedQids = Object.keys(questionBuckets).sort((a, b) => {
-      const aD = a.split('_')[0], bD = b.split('_')[0];
+      const aD = getDomain(a), bD = getDomain(b);
       const aI = domainOrder.indexOf(aD), bI = domainOrder.indexOf(bD);
       if (aI !== bI) return (aI < 0 ? 999 : aI) - (bI < 0 ? 999 : bI);
-      return (parseInt(a.split('_').pop(), 10) || 0) - (parseInt(b.split('_').pop(), 10) || 0);
+      return (parseInt(a.replace(/^[A-Z]+/, ''), 10) || 0) - (parseInt(b.replace(/^[A-Z]+/, ''), 10) || 0);
     });
 
     let qNum = 1;
