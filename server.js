@@ -16,6 +16,7 @@ import path from 'path';
 import crypto from 'crypto';
 import admin from 'firebase-admin';
 import Stripe from 'stripe';
+import PDFDocument from 'pdfkit';
 
 // ─── Structured Logger ────────────────────────────────────────────────────────
 const log = {
@@ -148,6 +149,88 @@ function loadJSON(fname) {
 }
 const EDSCLS_SAFETY = loadJSON('edscls_safety.json');
 const DREAM_BIG     = loadJSON('dream_big.json');
+
+// ─── School Climate Question Bank (shared across routes) ──────────────────────
+const CLIMATE_QUESTIONS = {
+  students: [
+    { n: 1,  text: 'I feel safe at this school.',                                                                                           open: false },
+    { n: 2,  text: 'Students treat each other with respect.',                                                                                open: false },
+    { n: 3,  text: 'Adults at this school treat students with respect.',                                                                     open: false },
+    { n: 4,  text: 'I feel comfortable telling an adult if something feels unsafe.',                                                         open: false },
+    { n: 5,  text: 'I feel like I belong at this school.',                                                                                   open: false },
+    { n: 6,  text: 'Teachers care about how I am doing.',                                                                                    open: false },
+    { n: 7,  text: 'I have at least one adult at school I can talk to if I have a problem.',                                                 open: false },
+    { n: 8,  text: 'My ideas and opinions matter at this school.',                                                                           open: false },
+    { n: 9,  text: 'I try my best to do well in school.',                                                                                    open: false },
+    { n: 10, text: 'Learning at this school is interesting to me.',                                                                          open: false },
+    { n: 11, text: 'My school is clean and well cared for.',                                                                                 open: false },
+    { n: 12, text: 'I have the materials and supplies I need to learn.',                                                                     open: false },
+    { n: 13, text: 'Students from different backgrounds are respected at this school.',                                                      open: false },
+    { n: 14, text: 'This school helps me learn and grow.',                                                                                   open: false },
+    { n: 15, text: 'If you could change one or two things to make school better for everyone, what would they be?',                          open: true  },
+    { n: 16, text: 'What is one thing about your school that you really love and never want to change?',                                     open: true  },
+  ],
+  teachers: [
+    { n: 1,  text: 'I feel safe at this school.',                                                                                           open: false },
+    { n: 2,  text: 'Students treat each other with respect.',                                                                                open: false },
+    { n: 3,  text: 'Students treat staff with respect.',                                                                                     open: false },
+    { n: 4,  text: 'Staff address bullying and harassment promptly.',                                                                        open: false },
+    { n: 5,  text: 'I feel comfortable raising safety concerns with school leadership.',                                                     open: false },
+    { n: 6,  text: 'I feel valued as a professional at this school.',                                                                        open: false },
+    { n: 7,  text: 'School leadership supports my growth and development.',                                                                  open: false },
+    { n: 8,  text: 'I have the autonomy to make meaningful decisions in my classroom.',                                                      open: false },
+    { n: 9,  text: 'There is open and honest communication among staff.',                                                                    open: false },
+    { n: 10, text: 'I am recognized for my contributions to this school.',                                                                   open: false },
+    { n: 11, text: 'I feel a sense of belonging in this school community.',                                                                  open: false },
+    { n: 12, text: 'I consistently have enough emotional energy to meet the demands of my students and colleagues.',                         open: false },
+    { n: 13, text: 'The school building and grounds are clean and well maintained.',                                                         open: false },
+    { n: 14, text: 'I have the materials and supplies I need to do my job well.',                                                            open: false },
+    { n: 15, text: 'Class sizes allow me to meet the needs of my students.',                                                                 open: false },
+    { n: 16, text: 'Physical conditions at this school support effective teaching and learning.',                                            open: false },
+    { n: 17, text: 'How prepared do you feel your school is to thoughtfully integrate Artificial Intelligence and AI tools into teaching and learning?', open: false },
+    { n: 18, text: 'If funding were not a barrier, what one or two practical changes would most improve teaching and learning at this school?', open: true  },
+    { n: 19, text: 'What is one thing this school does really well that you never want to change?',                                          open: true  },
+    { n: 20, text: 'Where do you think AI could be most helpful in your school — and where do you have concerns about it being used?',       open: true  },
+  ],
+  staff: [
+    { n: 1,  text: 'I feel safe at this school.',                                                                                           open: false },
+    { n: 2,  text: 'Students treat staff with respect.',                                                                                     open: false },
+    { n: 3,  text: 'Staff address bullying and harassment promptly.',                                                                        open: false },
+    { n: 4,  text: 'I feel comfortable raising safety concerns with school leadership.',                                                     open: false },
+    { n: 5,  text: 'The rules for student behavior are clear and consistently enforced.',                                                    open: false },
+    { n: 6,  text: 'I feel valued as a member of this school\'s team.',                                                                      open: false },
+    { n: 7,  text: 'School leadership treats all staff with respect.',                                                                       open: false },
+    { n: 8,  text: 'I feel a sense of belonging in this school community.',                                                                  open: false },
+    { n: 9,  text: 'My contributions to this school are recognized.',                                                                        open: false },
+    { n: 10, text: 'There is open and honest communication among staff.',                                                                    open: false },
+    { n: 11, text: 'The school building and grounds are clean and well maintained.',                                                         open: false },
+    { n: 12, text: 'I have the tools and resources I need to do my job well.',                                                               open: false },
+    { n: 13, text: 'Physical conditions at this school support my ability to do my job.',                                                    open: false },
+    { n: 14, text: 'Staff work together to create a positive environment for students.',                                                     open: false },
+    { n: 15, text: 'This school is a welcoming place for students of all backgrounds.',                                                      open: false },
+    { n: 16, text: 'If funding were not a barrier, what one or two changes would most improve the experience of staff and students at this school?', open: true  },
+    { n: 17, text: 'What is one thing about working at this school that you value most and never want to change?',                           open: true  },
+  ],
+  parents: [
+    { n: 1,  text: 'My child feels safe at school.',                                                       open: false },
+    { n: 2,  text: 'Teachers and staff treat students with respect.',                                      open: false },
+    { n: 3,  text: 'The rules for student behavior are fair.',                                             open: false },
+    { n: 4,  text: 'The school deals effectively with bullying.',                                          open: false },
+    { n: 5,  text: 'I feel comfortable reporting safety concerns to school staff.',                        open: false },
+    { n: 6,  text: 'I feel welcome at my child\'s school.',                                                open: false },
+    { n: 7,  text: 'The teachers at this school care about my child.',                                     open: false },
+    { n: 8,  text: 'The school keeps me informed about my child\'s academic progress.',                   open: false },
+    { n: 9,  text: 'School staff respond promptly to my questions and concerns.',                         open: false },
+    { n: 10, text: 'I have opportunities to share my opinions about school decisions.',                   open: false },
+    { n: 11, text: 'My child\'s teachers have high expectations for my child.',                           open: false },
+    { n: 12, text: 'Students from different backgrounds are respected at this school.',                   open: false },
+    { n: 13, text: 'My child has access to the resources needed to succeed at school.',                   open: false },
+    { n: 14, text: 'Teachers give my child feedback that helps them learn.',                               open: false },
+    { n: 15, text: 'This school is a welcoming place for students of all backgrounds.',                   open: false },
+    { n: 16, text: 'If funding were not a barrier, what one or two changes would most improve your child\'s experience at this school?', open: true },
+    { n: 17, text: 'What is one thing this school does really well for students and families that you never want to change?', open: true },
+  ],
+};
 
 // ─── Build AI Instructions (Echo/school climate) ──────────────────────────────
 function buildInstructions() {
@@ -3369,87 +3452,7 @@ app.post('/school-climate/send-deployment-email', requireAccessKey, async (req, 
   const roleLabel = ROLE_LABELS[role];
   const schoolDisplay = school_name || 'your school';
 
-  const CLIMATE_QUESTIONS = {
-    students: [
-      { n: 1,  text: 'I feel safe at this school.',                                                                                           open: false },
-      { n: 2,  text: 'Students treat each other with respect.',                                                                                open: false },
-      { n: 3,  text: 'Adults at this school treat students with respect.',                                                                     open: false },
-      { n: 4,  text: 'I feel comfortable telling an adult if something feels unsafe.',                                                         open: false },
-      { n: 5,  text: 'I feel like I belong at this school.',                                                                                   open: false },
-      { n: 6,  text: 'Teachers care about how I am doing.',                                                                                    open: false },
-      { n: 7,  text: 'I have at least one adult at school I can talk to if I have a problem.',                                                 open: false },
-      { n: 8,  text: 'My ideas and opinions matter at this school.',                                                                           open: false },
-      { n: 9,  text: 'I try my best to do well in school.',                                                                                    open: false },
-      { n: 10, text: 'Learning at this school is interesting to me.',                                                                          open: false },
-      { n: 11, text: 'My school is clean and well cared for.',                                                                                 open: false },
-      { n: 12, text: 'I have the materials and supplies I need to learn.',                                                                     open: false },
-      { n: 13, text: 'Students from different backgrounds are respected at this school.',                                                      open: false },
-      { n: 14, text: 'This school helps me learn and grow.',                                                                                   open: false },
-      { n: 15, text: 'If you could change one or two things to make school better for everyone, what would they be?',                          open: true  },
-      { n: 16, text: 'What is one thing about your school that you really love and never want to change?',                                     open: true  },
-    ],
-    teachers: [
-      { n: 1,  text: 'I feel safe at this school.',                                                                                           open: false },
-      { n: 2,  text: 'Students treat each other with respect.',                                                                                open: false },
-      { n: 3,  text: 'Students treat staff with respect.',                                                                                     open: false },
-      { n: 4,  text: 'Staff address bullying and harassment promptly.',                                                                        open: false },
-      { n: 5,  text: 'I feel comfortable raising safety concerns with school leadership.',                                                     open: false },
-      { n: 6,  text: 'I feel valued as a professional at this school.',                                                                        open: false },
-      { n: 7,  text: 'School leadership supports my growth and development.',                                                                  open: false },
-      { n: 8,  text: 'I have the autonomy to make meaningful decisions in my classroom.',                                                      open: false },
-      { n: 9,  text: 'There is open and honest communication among staff.',                                                                    open: false },
-      { n: 10, text: 'I am recognized for my contributions to this school.',                                                                   open: false },
-      { n: 11, text: 'I feel a sense of belonging in this school community.',                                                                  open: false },
-      { n: 12, text: 'I consistently have enough emotional energy to meet the demands of my students and colleagues.',                         open: false },
-      { n: 13, text: 'The school building and grounds are clean and well maintained.',                                                         open: false },
-      { n: 14, text: 'I have the materials and supplies I need to do my job well.',                                                            open: false },
-      { n: 15, text: 'Class sizes allow me to meet the needs of my students.',                                                                 open: false },
-      { n: 16, text: 'Physical conditions at this school support effective teaching and learning.',                                            open: false },
-      { n: 17, text: 'How prepared do you feel your school is to thoughtfully integrate Artificial Intelligence and AI tools into teaching and learning?', open: false },
-      { n: 18, text: 'If funding were not a barrier, what one or two practical changes would most improve teaching and learning at this school?', open: true  },
-      { n: 19, text: 'What is one thing this school does really well that you never want to change?',                                          open: true  },
-      { n: 20, text: 'Where do you think AI could be most helpful in your school — and where do you have concerns about it being used?',       open: true  },
-    ],
-    staff: [
-      { n: 1,  text: 'I feel safe at this school.',                                                                                           open: false },
-      { n: 2,  text: 'Students treat staff with respect.',                                                                                     open: false },
-      { n: 3,  text: 'Staff address bullying and harassment promptly.',                                                                        open: false },
-      { n: 4,  text: 'I feel comfortable raising safety concerns with school leadership.',                                                     open: false },
-      { n: 5,  text: 'The rules for student behavior are clear and consistently enforced.',                                                    open: false },
-      { n: 6,  text: 'I feel valued as a member of this school\'s team.',                                                                      open: false },
-      { n: 7,  text: 'School leadership treats all staff with respect.',                                                                       open: false },
-      { n: 8,  text: 'I feel a sense of belonging in this school community.',                                                                  open: false },
-      { n: 9,  text: 'My contributions to this school are recognized.',                                                                        open: false },
-      { n: 10, text: 'There is open and honest communication among staff.',                                                                    open: false },
-      { n: 11, text: 'The school building and grounds are clean and well maintained.',                                                         open: false },
-      { n: 12, text: 'I have the tools and resources I need to do my job well.',                                                               open: false },
-      { n: 13, text: 'Physical conditions at this school support my ability to do my job.',                                                    open: false },
-      { n: 14, text: 'Staff work together to create a positive environment for students.',                                                     open: false },
-      { n: 15, text: 'This school is a welcoming place for students of all backgrounds.',                                                      open: false },
-      { n: 16, text: 'If funding were not a barrier, what one or two changes would most improve the experience of staff and students at this school?', open: true  },
-      { n: 17, text: 'What is one thing about working at this school that you value most and never want to change?',                           open: true  },
-    ],
-    parents: [
-      { n: 1,  text: 'My child feels safe at school.',                                                       open: false },
-      { n: 2,  text: 'Teachers and staff treat students with respect.',                                      open: false },
-      { n: 3,  text: 'The rules for student behavior are fair.',                                             open: false },
-      { n: 4,  text: 'The school deals effectively with bullying.',                                          open: false },
-      { n: 5,  text: 'I feel comfortable reporting safety concerns to school staff.',                        open: false },
-      { n: 6,  text: 'I feel welcome at my child\'s school.',                                                open: false },
-      { n: 7,  text: 'The teachers at this school care about my child.',                                     open: false },
-      { n: 8,  text: 'The school keeps me informed about my child\'s academic progress.',                   open: false },
-      { n: 9,  text: 'School staff respond promptly to my questions and concerns.',                         open: false },
-      { n: 10, text: 'I have opportunities to share my opinions about school decisions.',                   open: false },
-      { n: 11, text: 'My child\'s teachers have high expectations for my child.',                           open: false },
-      { n: 12, text: 'Students from different backgrounds are respected at this school.',                   open: false },
-      { n: 13, text: 'My child has access to the resources needed to succeed at school.',                   open: false },
-      { n: 14, text: 'Teachers give my child feedback that helps them learn.',                               open: false },
-      { n: 15, text: 'This school is a welcoming place for students of all backgrounds.',                   open: false },
-      { n: 16, text: 'If funding were not a barrier, what one or two changes would most improve your child\'s experience at this school?', open: true },
-      { n: 17, text: 'What is one thing this school does really well for students and families that you never want to change?', open: true },
-    ],
-  };
-
+  // CLIMATE_QUESTIONS is defined at module scope — used directly below.
   const questions = CLIMATE_QUESTIONS[role];
   const questionRows = questions.map(q =>
     `<tr><td style="padding:7px 0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:14px;color:#374151;line-height:1.65;border-bottom:1px solid #f1f5f9;">` +
@@ -4595,6 +4598,266 @@ app.get('/workplace/stats', requireAccessKey, async (req, res) => {
   } catch (err) {
     log.error('Workplace stats fetch failed', { error: err.message });
     return res.status(500).json({ error: 'Failed to fetch workplace stats', detail: err.message });
+  }
+});
+
+// ─── API: Generate Quantitative PDF Report ────────────────────────────────────
+// POST /api/generate-quantitative-report
+// Body: { schoolId, deploymentId?, role, productType }
+//   productType: 'school_climate' | 'workplace'
+//   role: 'teachers'|'students'|'staff'|'parents' (school_climate) or 'all' (workplace)
+// Returns: binary PDF  Content-Type: application/pdf
+app.post('/api/generate-quantitative-report', requireAccessKey, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
+
+  const { schoolId, role, productType } = req.body;
+
+  // ── Validate inputs ─────────────────────────────────────────────────────────
+  if (!schoolId || typeof schoolId !== 'string') {
+    return res.status(400).json({ error: 'schoolId is required' });
+  }
+  const validProductTypes = ['school_climate', 'workplace'];
+  if (!productType || !validProductTypes.includes(productType)) {
+    return res.status(400).json({ error: `productType must be one of: ${validProductTypes.join(', ')}` });
+  }
+  const validRoles = productType === 'school_climate'
+    ? ['teachers', 'students', 'staff', 'parents']
+    : ['all'];
+  if (!role || !validRoles.includes(role)) {
+    return res.status(400).json({ error: `For ${productType}, role must be one of: ${validRoles.join(', ')}` });
+  }
+
+  try {
+    // ── 1. Sections to query ─────────────────────────────────────────────────
+    // 'all' (workplace) queries every school_climate section.
+    const sections = role === 'all'
+      ? ['school_climate_students', 'school_climate_teachers', 'school_climate_staff', 'school_climate_parents']
+      : [`school_climate_${role}`];
+
+    // ── 2. Load test tokens for exclusion ────────────────────────────────────
+    const testTokenSet = new Set();
+    try {
+      const testSnap = await db.collection('climate_tokens').where('school_id', '==', schoolId).get();
+      testSnap.docs.forEach(d => { if (d.data().is_test === true) testTokenSet.add(d.data().token); });
+    } catch (e) {
+      log.warn('Quant report: could not load test tokens', { error: e.message });
+    }
+
+    // ── 3. Fetch & filter responses ──────────────────────────────────────────
+    // Single-field where clause per section (avoids Firestore composite-index).
+    // school_id, open-ended, and test filtering done in memory.
+    const allDocs = [];
+    await Promise.all(sections.map(async (section) => {
+      const snap = await db.collection('responses').where('section', '==', section).get();
+      snap.docs.forEach(d => {
+        const data = d.data();
+        if (data.school_id !== schoolId) return;
+        if (data.is_test === true) return;
+        if (data.token && testTokenSet.has(data.token)) return;
+        if (data.domain === 'dream_big' || data.domain === 'open') return; // exclude open-ended
+        if (data.rating === undefined || data.rating === null) return;
+        allDocs.push({ id: d.id, ...data });
+      });
+    }));
+
+    log.info('Quant report: fetched responses', { schoolId, role, productType, docCount: allDocs.length });
+
+    // ── 4. Bucket ratings by question_id ────────────────────────────────────
+    const questionBuckets = {}; // qid → { ratings: number[], domain: string }
+    for (const doc of allDocs) {
+      const qid = String(doc.question_id || '').trim();
+      if (!qid) continue;
+      const rating = Number(doc.rating);
+      if (isNaN(rating)) continue;
+      const domain = qid.includes('_') ? qid.split('_')[0] : 'other';
+      if (!questionBuckets[qid]) questionBuckets[qid] = { ratings: [], domain };
+      questionBuckets[qid].ratings.push(rating);
+    }
+
+    // ── 5. Descriptive stats ─────────────────────────────────────────────────
+    function computeStats(ratings) {
+      const n = ratings.length;
+      if (n === 0) return { n: 0, mean: 0, min: 0, max: 0, std_dev: 0 };
+      const sum = ratings.reduce((a, b) => a + b, 0);
+      const mean = Math.round((sum / n) * 100) / 100;
+      const min  = Math.min(...ratings);
+      const max  = Math.max(...ratings);
+      const variance = ratings.reduce((acc, r) => acc + Math.pow(r - mean, 2), 0) / n;
+      const std_dev  = Math.round(Math.sqrt(variance) * 100) / 100;
+      return { n, mean, min, max, std_dev };
+    }
+
+    // ── 6. Question text lookup ───────────────────────────────────────────────
+    // Parses the trailing number from qid (e.g. 'safety_3' → 3) and resolves
+    // CLIMATE_QUESTIONS[role][n].text. Falls back to the raw qid string.
+    function getQuestionText(qid) {
+      const roleQs = CLIMATE_QUESTIONS[role];
+      if (roleQs) {
+        const n = parseInt(qid.split('_').pop(), 10);
+        if (!isNaN(n)) {
+          const q = roleQs.find(item => item.n === n && !item.open);
+          if (q) return q.text;
+        }
+      }
+      return qid;
+    }
+
+    // ── 7. Domain grouping ────────────────────────────────────────────────────
+    const SCHOOL_CLIMATE_DOMAINS = ['safety', 'engagement', 'environment', 'ai_readiness'];
+    const WORKPLACE_DOMAINS = ['work_demands', 'organizational_support', 'work_life_balance',
+                               'health_wellbeing', 'workplace_culture', 'ai_readiness'];
+    const domainOrder = productType === 'school_climate' ? SCHOOL_CLIMATE_DOMAINS : WORKPLACE_DOMAINS;
+
+    const grouped = {};
+    for (const d of domainOrder) grouped[d] = [];
+
+    // Sort qids: by domain order first, then by numeric suffix
+    const sortedQids = Object.keys(questionBuckets).sort((a, b) => {
+      const aD = a.split('_')[0], bD = b.split('_')[0];
+      const aI = domainOrder.indexOf(aD), bI = domainOrder.indexOf(bD);
+      if (aI !== bI) return (aI < 0 ? 999 : aI) - (bI < 0 ? 999 : bI);
+      return (parseInt(a.split('_').pop(), 10) || 0) - (parseInt(b.split('_').pop(), 10) || 0);
+    });
+
+    let qNum = 1;
+    for (const qid of sortedQids) {
+      const { ratings, domain } = questionBuckets[qid];
+      const stats  = computeStats(ratings);
+      const text   = getQuestionText(qid);
+      const bucket = domainOrder.includes(domain) ? domain : domainOrder[0];
+      grouped[bucket].push({ qNum: qNum++, qid, text, ...stats });
+    }
+
+    // ── 8. Build PDF ──────────────────────────────────────────────────────────
+    const NAVY       = '#1E3A5F';
+    const LIGHT_GRAY = '#F8FAFC';
+    const dateStr    = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    const dateSlug   = new Date().toISOString().split('T')[0];
+    const reportTitle = productType === 'school_climate'
+      ? 'School Climate Quantitative Summary'
+      : 'Workplace Quantitative Summary';
+    const roleLabel = role === 'all' ? 'All' : role.charAt(0).toUpperCase() + role.slice(1);
+
+    // Column widths (pts): # | Question Text | n | Mean | Min | Max | Std Dev
+    const COL_WIDTHS  = [25, 280, 35, 50, 35, 35, 50];
+    const COL_HEADERS = ['#', 'Question Text', 'n', 'Mean', 'Min', 'Max', 'Std Dev'];
+    const ROW_H = 28;
+
+    const pdfDoc = new PDFDocument({ margin: 40, size: 'LETTER', bufferPages: true });
+    const chunks = [];
+    pdfDoc.on('data', chunk => chunks.push(chunk));
+
+    await new Promise((resolve, reject) => {
+      pdfDoc.on('end', resolve);
+      pdfDoc.on('error', reject);
+
+      const marginL = pdfDoc.page.margins.left;
+      const pageW   = pdfDoc.page.width  - pdfDoc.page.margins.left - pdfDoc.page.margins.right;
+      const pageH   = pdfDoc.page.height;
+      const marginB = pdfDoc.page.margins.bottom;
+      const marginT = pdfDoc.page.margins.top;
+
+      // Page header
+      pdfDoc.font('Helvetica-Bold').fontSize(22).fillColor(NAVY).text('CLARITY 360', { align: 'center' });
+      pdfDoc.moveDown(0.3);
+      pdfDoc.font('Helvetica-Bold').fontSize(15).fillColor(NAVY).text(reportTitle, { align: 'center' });
+      pdfDoc.moveDown(0.3);
+      pdfDoc.font('Helvetica').fontSize(9).fillColor('#374151')
+        .text(`School/Org ID: ${schoolId}   |   Role: ${roleLabel}   |   Generated: ${dateStr}`, { align: 'center' });
+      pdfDoc.moveDown(0.2);
+      pdfDoc.font('Helvetica').fontSize(8).fillColor('#374151')
+        .text('Ratings are on a 1–4 scale.  1=Strongly Disagree,  2=Disagree,  3=Agree,  4=Strongly Agree', { align: 'center' });
+      pdfDoc.moveDown(0.2);
+      pdfDoc.font('Helvetica-Bold').fontSize(8).fillColor('#991B1B')
+        .text('Confidential — For District Use Only', { align: 'center' });
+      pdfDoc.moveDown(0.8);
+
+      // Table helpers
+      function drawTableHeader(y) {
+        pdfDoc.rect(marginL, y, pageW, 18).fill(NAVY);
+        let cx = marginL;
+        COL_HEADERS.forEach((h, i) => {
+          pdfDoc.fillColor('white').font('Helvetica-Bold').fontSize(8)
+            .text(h, cx + 2, y + 5, { width: COL_WIDTHS[i] - 4, align: i === 1 ? 'left' : 'center', lineBreak: false });
+          cx += COL_WIDTHS[i];
+        });
+        return y + 18;
+      }
+
+      function drawDataRow(row, y, isEven) {
+        pdfDoc.rect(marginL, y, pageW, ROW_H).fill(isEven ? 'white' : LIGHT_GRAY);
+        let meanColor = '#111827';
+        if      (row.mean >= 3.5) meanColor = '#166534';
+        else if (row.mean >= 3.0) meanColor = '#111827';
+        else if (row.mean >= 2.5) meanColor = '#92400E';
+        else                      meanColor = '#991B1B';
+        const cells = [
+          { text: String(row.qNum),    color: '#374151', bold: false },
+          { text: row.text,            color: '#374151', bold: false },
+          { text: String(row.n),       color: '#374151', bold: false },
+          { text: String(row.mean),    color: meanColor,  bold: true  },
+          { text: String(row.min),     color: '#374151', bold: false },
+          { text: String(row.max),     color: '#374151', bold: false },
+          { text: String(row.std_dev), color: '#374151', bold: false },
+        ];
+        let cx = marginL;
+        cells.forEach((cell, i) => {
+          pdfDoc.fillColor(cell.color).font(cell.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(7.5)
+            .text(cell.text, cx + 2, y + 4, {
+              width: COL_WIDTHS[i] - 4, height: ROW_H - 6,
+              align: i === 1 ? 'left' : 'center', lineBreak: i === 1,
+            });
+          cx += COL_WIDTHS[i];
+        });
+        return y + ROW_H;
+      }
+
+      // Render each domain
+      for (const domain of domainOrder) {
+        const rows = grouped[domain];
+        if (!rows || rows.length === 0) continue;
+        if (pdfDoc.y + 50 > pageH - marginB - 40) { pdfDoc.addPage(); pdfDoc.y = marginT; }
+        pdfDoc.moveDown(0.4);
+        const domainLabel = domain.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        pdfDoc.font('Helvetica-Bold').fontSize(12).fillColor(NAVY).text(domainLabel);
+        pdfDoc.moveDown(0.3);
+        let tableY = pdfDoc.y;
+        if (tableY + 18 + ROW_H > pageH - marginB - 30) { pdfDoc.addPage(); tableY = marginT; }
+        tableY = drawTableHeader(tableY);
+        rows.forEach((row, idx) => {
+          if (tableY + ROW_H > pageH - marginB - 30) {
+            pdfDoc.addPage(); tableY = marginT;
+            tableY = drawTableHeader(tableY);
+          }
+          tableY = drawDataRow(row, tableY, idx % 2 === 0);
+        });
+        pdfDoc.y = tableY + 4;
+      }
+
+      // Footer on every page
+      const range = pdfDoc.bufferedPageRange();
+      for (let i = 0; i < range.count; i++) {
+        pdfDoc.switchToPage(range.start + i);
+        const fy = pageH - marginB + 8;
+        pdfDoc.fillColor('#9CA3AF').font('Helvetica').fontSize(7.5)
+          .text('Generated by Clarity 360 · Engaging Education Solutions, LLC · knoell@engagingpd.com',
+            marginL, fy, { align: 'center', width: pageW, lineBreak: false })
+          .text(`Page ${i + 1} of ${range.count}`,
+            marginL, fy + 10, { align: 'center', width: pageW, lineBreak: false });
+      }
+      pdfDoc.end();
+    });
+
+    const pdfBuffer = Buffer.concat(chunks);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition',
+      `attachment; filename="clarity360-quantitative-${schoolId}-${dateSlug}.pdf"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+    return res.send(pdfBuffer);
+
+  } catch (e) {
+    log.error('Quantitative report generation failed', { error: e.message, stack: e.stack });
+    return res.status(500).json({ error: 'Failed to generate quantitative report', detail: e.message });
   }
 });
 
