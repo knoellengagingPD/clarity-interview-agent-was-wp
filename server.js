@@ -4621,7 +4621,7 @@ app.post('/api/generate-quantitative-report', requireAccessKey, async (req, res)
     return res.status(400).json({ error: `productType must be one of: ${validProductTypes.join(', ')}` });
   }
   const validRoles = productType === 'school_climate'
-    ? ['teachers', 'students', 'staff', 'parents']
+    ? ['teachers', 'students', 'staff', 'parents', 'all']
     : ['all'];
   if (!role || !validRoles.includes(role)) {
     return res.status(400).json({ error: `For ${productType}, role must be one of: ${validRoles.join(', ')}` });
@@ -4629,7 +4629,7 @@ app.post('/api/generate-quantitative-report', requireAccessKey, async (req, res)
 
   try {
     // ── 1. Sections to query ─────────────────────────────────────────────────
-    // 'all' (workplace) queries every school_climate section.
+    // 'all' queries all four school_climate sections (works for both productTypes).
     const sections = role === 'all'
       ? ['school_climate_students', 'school_climate_teachers', 'school_climate_staff', 'school_climate_parents']
       : [`school_climate_${role}`];
