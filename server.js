@@ -3842,6 +3842,21 @@ app.get('/school-climate/crisis-flags', requireAccessKey, async (req, res) => {
   }
 });
 
+// ─── School Climate: List unique school IDs ───────────────────────────────────
+// GET /school-climate/school-ids
+// Returns sorted list of all unique school_id values in climate_tokens.
+app.get('/school-climate/school-ids', requireAccessKey, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Firestore not available' });
+  try {
+    const snap = await db.collection('climate_tokens').get();
+    const ids = [...new Set(snap.docs.map(d => d.data().school_id).filter(Boolean))].sort();
+    return res.json({ school_ids: ids });
+  } catch (e) {
+    log.error('Failed to fetch school IDs from climate_tokens', { error: e.message });
+    return res.status(500).json({ error: 'Failed to fetch school IDs' });
+  }
+});
+
 // ─── School Climate: Archive / Unarchive Session ──────────────────────────────
 // PATCH /school-climate/sessions/:sessionId
 // Body: { school_id, action: 'archive' | 'unarchive' }
