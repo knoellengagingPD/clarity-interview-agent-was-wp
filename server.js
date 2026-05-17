@@ -522,14 +522,14 @@ app.get(
   rateLimit({ windowMs: 60_000, max: 10 }),
   requireAccessKey,
   async (req, res) => {
-    const model = 'gpt-4o-realtime-preview';
+    const model = 'gpt-realtime';
     try {
       const resp = await fetchWithTimeout(
-        'https://api.openai.com/v1/realtime/sessions',
+        'https://api.openai.com/v1/realtime/client_secrets',
         {
           method: 'POST',
           headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model, voice: 'alloy' }),
+          body: JSON.stringify({ session: { type: 'realtime', model, audio: { output: { voice: 'shimmer' } } } }),
         },
         10_000
       );
@@ -541,7 +541,7 @@ app.get(
       }
 
       const data = await resp.json();
-      return res.json({ client_secret: data.client_secret, url: 'https://api.openai.com/v1/realtime', model });
+      return res.json({ client_secret: { value: data.value }, url: 'https://api.openai.com/v1/realtime', model });
     } catch (e) {
       if (e.name === 'AbortError') {
         log.error('OpenAI session timeout');
