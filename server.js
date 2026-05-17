@@ -522,7 +522,7 @@ app.get(
   rateLimit({ windowMs: 60_000, max: 10 }),
   requireAccessKey,
   async (req, res) => {
-    const model = 'gpt-realtime-1.5';
+    const model = 'gpt-4o-realtime-preview';
     try {
       const resp = await fetchWithTimeout(
         'https://api.openai.com/v1/realtime/sessions',
