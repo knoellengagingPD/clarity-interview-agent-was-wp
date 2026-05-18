@@ -19,10 +19,22 @@ import Stripe from 'stripe';
 import PDFDocument from 'pdfkit';
 
 // ─── Structured Logger ────────────────────────────────────────────────────────
+async function shipLog(level, msg, meta = {}) {
+  const token = process.env.BETTER_STACK_TOKEN;
+  if (!token) return;
+  try {
+    await fetch('https://s2448018.eu-fsn-3.betterstackdata.com', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ level, message: msg, ...meta, ts: new Date().toISOString() }),
+    });
+  } catch (_) {}
+}
+
 const log = {
-  info:  (msg, meta = {}) => console.log(JSON.stringify({ level: 'info',  msg, ...meta, ts: new Date().toISOString() })),
-  warn:  (msg, meta = {}) => console.warn(JSON.stringify({ level: 'warn',  msg, ...meta, ts: new Date().toISOString() })),
-  error: (msg, meta = {}) => console.error(JSON.stringify({ level: 'error', msg, ...meta, ts: new Date().toISOString() })),
+  info:  (msg, meta = {}) => { console.log(JSON.stringify({ level: 'info',  msg, ...meta, ts: new Date().toISOString() })); shipLog('info',  msg, meta); },
+  warn:  (msg, meta = {}) => { console.warn(JSON.stringify({ level: 'warn',  msg, ...meta, ts: new Date().toISOString() })); shipLog('warn',  msg, meta); },
+  error: (msg, meta = {}) => { console.error(JSON.stringify({ level: 'error', msg, ...meta, ts: new Date().toISOString() })); shipLog('error', msg, meta); },
 };
 
 // ─── In-memory response cache (reduces Firestore reads on hot endpoints) ─────
