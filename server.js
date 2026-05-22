@@ -565,6 +565,42 @@ app.get(
   }
 );
 
+// ─── Followup-text chunk buffer (school_climate open-ended responses) ─────────
+// The client calls /log_response multiple times with the same question_id as
+// speech-to-text transcription chunks arrive. This buffer accumulates those
+// chunks and writes one consolidated Firestore document 4 s after the last
+// chunk — preventing many partial fragments being stored instead of the full
+// utterance. Only school_climate open-ended responses (rating 0 / absent) are
+// buffered; rated responses (rating 1–4) are written immediately as before.
+const _followupBuffer = new Map(); // key: `${session_id}::${question_id}`
+const FOLLOWUP_FLUSH_MS = 4000;
+
+function _scheduleFollowupFlush(key) {
+  const entry = _followupBuffer.get(key);
+  if (!entry) return;
+  if (entry.timer) clearTimeout(entry.timer);
+  entry.timer = setTimeout(async () => {
+    const e = _followupBuffer.get(key);
+    if (!e) return;
+    _followupBuffer.delete(key);
+    const fullText = e.chunks.join(' ').trim();
+    if (!fullText) return;
+    const finalDoc = { ...e.baseDoc, followup_text: fullText };
+    try {
+      await e.targetDb.collection('responses').add(finalDoc);
+      log.info('Followup buffer flushed', {
+        session_id: e.baseDoc.session_id,
+        question_id: e.baseDoc.question_id,
+        chunks: e.chunks.length,
+        chars: fullText.length,
+      });
+      cacheInvalidatePrefix('sc_sessions:');
+    } catch (err) {
+      log.error('Followup buffer flush failed', { error: err.message, key });
+    }
+  }, FOLLOWUP_FLUSH_MS);
+}
+
 // ─── Log Response — routes to correct database by section ─────────────────────
 app.post(
   '/log_response',
@@ -624,6 +660,23 @@ app.post(
     if (section.startsWith('school_climate_') && question_id.startsWith('turn_')) {
       log.info('Skipping turn record — not a participant response', { section, question_id });
       return res.json({ status: 'ok' });
+    }
+
+    // Buffer open-ended followup_text chunks for school_climate sections.
+    // A chunk is identified by: school_climate section + rating 0 or absent + non-empty followup_text.
+    // Rated responses (rating 1–4) bypass the buffer and are written immediately.
+    const isOpenEndedChunk =
+      section.startsWith('school_climate_') &&
+      doc.followup_text &&
+      (!doc.rating || doc.rating === 0);
+    if (isOpenEndedChunk) {
+      const bufKey = `${doc.session_id}::${question_id}`;
+      if (!_followupBuffer.has(bufKey)) {
+        _followupBuffer.set(bufKey, { chunks: [], baseDoc: { ...doc }, targetDb, timer: null });
+      }
+      _followupBuffer.get(bufKey).chunks.push(doc.followup_text);
+      _scheduleFollowupFlush(bufKey);
+      return res.json({ status: 'ok', buffered: true });
     }
 
     try {
