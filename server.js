@@ -4692,6 +4692,8 @@ app.post('/api/generate-quantitative-report', requireAccessKey, async (req, res)
         if (data.token && testTokenSet.has(data.token)) return;
         if (data.domain === 'dream_big' || data.domain === 'open') return; // exclude open-ended
         if (data.rating === undefined || data.rating === null) return;
+        if (data.rating === 0) return;                                       // exclude zero-rated turn records
+        if (String(data.question_id || '').startsWith('turn_')) return;     // exclude AI conversational turns
         allDocs.push({ id: d.id, ...data });
       });
     }));
