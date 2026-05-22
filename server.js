@@ -617,6 +617,15 @@ app.post(
       if (req.body.response_mode === 'text') doc.response_mode = 'text';
     }
 
+    // Skip AI conversational turn records — these are server-side scaffolding,
+    // not participant responses. question_id values like "turn_1", "turn_16",
+    // "turn_36" are emitted by the client for every AI utterance and must never
+    // be persisted to Firestore.
+    if (question_id.startsWith('turn_')) {
+      log.info('Skipping turn record — not a participant response', { section, question_id });
+      return res.json({ status: 'ok' });
+    }
+
     try {
       await targetDb.collection('responses').add(doc);
       log.info('Response logged', { section, question_id, school_id: doc.school_id, client_id: doc.client_id });
