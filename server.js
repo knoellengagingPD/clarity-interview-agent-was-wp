@@ -621,7 +621,7 @@ app.post(
     // not participant responses. question_id values like "turn_1", "turn_16",
     // "turn_36" are emitted by the client for every AI utterance and must never
     // be persisted to Firestore.
-    if (question_id.startsWith('turn_')) {
+    if (section.startsWith('school_climate_') && question_id.startsWith('turn_')) {
       log.info('Skipping turn record — not a participant response', { section, question_id });
       return res.json({ status: 'ok' });
     }
