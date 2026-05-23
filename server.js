@@ -586,8 +586,23 @@ function _scheduleFollowupFlush(key) {
     const fullText = e.chunks.join(' ').trim();
     if (!fullText) return;
     const finalDoc = { ...e.baseDoc, followup_text: fullText };
+    // Deterministic doc ID: lets us find and append to any prior partial flush
+    // for the same session + question, rather than creating a new fragment doc.
+    const safeId = (s) => (s || '').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 60);
+    const docId = `sc_${safeId(e.baseDoc.session_id)}_${safeId(e.baseDoc.question_id)}`;
+    const docRef = e.targetDb.collection('responses').doc(docId);
     try {
-      await e.targetDb.collection('responses').add(finalDoc);
+      await e.targetDb.runTransaction(async (txn) => {
+        const snap = await txn.get(docRef);
+        if (snap.exists) {
+          // A prior flush already wrote a partial result — append, never overwrite.
+          const prior = snap.data().followup_text || '';
+          const combined = prior ? `${prior} ${fullText}`.trim() : fullText;
+          txn.update(docRef, { followup_text: combined });
+        } else {
+          txn.set(docRef, finalDoc);
+        }
+      });
       log.info('Followup buffer flushed', {
         session_id: e.baseDoc.session_id,
         question_id: e.baseDoc.question_id,
