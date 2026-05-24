@@ -4761,7 +4761,8 @@ app.post('/api/generate-quantitative-report', requireAccessKey, async (req, res)
         if (data.domain === 'dream_big' || data.domain === 'open') return; // exclude open-ended
         if (data.rating === undefined || data.rating === null) return;
         if (data.rating === 0) return;                                       // exclude zero-rated turn records
-        if (String(data.question_id || '').startsWith('turn_')) return;     // exclude AI conversational turns
+        if (/^turn_\d+$/.test(String(data.question_id || ''))) return;      // Fix 1: exclude turn_N conversational records
+        if (role !== 'all' && data.role !== role) return;                   // Fix 2: enforce role filter
         allDocs.push({ id: d.id, ...data });
       });
     }));
