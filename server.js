@@ -3086,11 +3086,17 @@ app.post('/district/request-access', async (req, res) => {
                 <p style="margin:16px 0 0;font-size:13px;color:#6b7280;text-align:center;">This code expires in <strong>15 minutes</strong>. Do not share it with anyone.</p>
               </div>
             </div>`;
-          await fetch('https://api.resend.com/emails', {
+          const resendRes = await fetch('https://api.resend.com/emails', {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({ from: 'Clarity 360 <noreply@clarity360hq.com>', to: [email.trim()], subject: 'Your Clarity 360 Access Code', html: codeHtml }),
           });
+          const resendData = await resendRes.json();
+          if (!resendRes.ok) {
+            log.error('District OTP email failed', { status: resendRes.status, error: resendData });
+          } else {
+            log.info('District OTP email sent', { districtId, to: email.trim() });
+          }
         } else {
           log.warn('RESEND_API_KEY not set — district OTP email not sent', { districtId });
         }
