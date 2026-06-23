@@ -17,6 +17,7 @@ import crypto from 'crypto';
 import admin from 'firebase-admin';
 import Stripe from 'stripe';
 import PDFDocument from 'pdfkit';
+import { writeSessionToSupabase } from './lib/writeToSupabase.js';
 
 // ─── Structured Logger ────────────────────────────────────────────────────────
 async function shipLog(level, msg, meta = {}) {
@@ -727,6 +728,35 @@ app.post(
     }
   }
 );
+
+// ─── School Climate: Session Complete ─────────────────────────────────────────
+app.post('/school-climate/session-complete', requireAccessKey, async (req, res) => {
+  const {
+    session_id, deployment_id, school_id, role,
+    response_mode, token, is_test, started_at, completed_at,
+    rated_responses, dream_big_responses
+  } = req.body;
+
+  // Respond immediately — never block the client on Supabase
+  res.status(202).json({ status: 'accepted' });
+
+  // Fire-and-forget Supabase write after response sent
+  writeSessionToSupabase({
+    sessionId: session_id,
+    deploymentId: deployment_id || `${school_id}-unknown`,
+    schoolId: school_id,
+    role,
+    responseMode: response_mode || 'voice',
+    token: token || null,
+    isTest: is_test || false,
+    startedAt: started_at || null,
+    completedAt: completed_at || new Date().toISOString(),
+    ratedResponses: rated_responses || [],
+    dreamBigResponses: dream_big_responses || []
+  }).catch(err => {
+    console.error('[school-climate/session-complete] Supabase write failed:', err);
+  });
+});
 
 // ─── Admin: Clarity 360 Sessions ─────────────────────────────────────────────
 app.get('/admin/sessions', requireAccessKey, async (req, res) => {
