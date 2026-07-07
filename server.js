@@ -1338,24 +1338,71 @@ app.post('/admin/generate-administrator-report', requireAccessKey, async (req, r
 
     console.log('[admin/generate-administrator-report] Success — report length:', data.content[0].text.length, 'chars');
 
-    // ── 7. Look up superintendent leads and email the report ─────────────────
+    // ── 7. Save report to Firestore ──────────────────────────────────────────
+    // Email is NOT sent here. Use POST /admin/send-administrator-report to send
+    // after reviewing the report in the admin dashboard.
     const reportText = data.content[0].text;
-    const reportedSessionIds = new Set(sessions.map(s => s.session_id));
+    const reportedSessionIds = sessions.map(s => s.session_id);
+    let savedReportId = null;
 
-    if (db && process.env.RESEND_API_KEY) {
+    if (db) {
       try {
-        const leadsSnap = await db.collection('superintendent_leads').get();
-        const leads = leadsSnap.docs
-          .map(d => ({ id: d.id, ...d.data() }))
-          .filter(l => reportedSessionIds.has(l.session_id) && l.email);
+        const reportRef = await db.collection('administrator_reports').add({
+          reportText,
+          session_ids: reportedSessionIds,
+          generatedAt: new Date().toISOString(),
+          sentAt: null,
+        });
+        savedReportId = reportRef.id;
+        console.log('[admin/generate-administrator-report] Report saved to Firestore — id:', savedReportId);
+      } catch (saveErr) {
+        console.error('[admin/generate-administrator-report] Failed to save report to Firestore:', saveErr.message);
+        // Non-fatal — report is still returned to frontend
+      }
+    }
 
-        console.log('[admin/generate-administrator-report] Found', leads.length, 'leads to email');
+    // Return in the same shape as /admin/generate-report; report_id added so
+    // the frontend can pass it to /admin/send-administrator-report later.
+    return res.json({ ...data, report_id: savedReportId });
 
-        const reportHtml = markdownToHtml(reportText);
+  } catch (e) {
+    console.error('[admin/generate-administrator-report] Exception:', e.message);
+    console.error('[admin/generate-administrator-report] Stack:', e.stack);
+    log.error('Administrator report generation failed', { error: e.message });
+    return res.status(500).json({ error: 'Report generation failed' });
+  }
+});
 
-        for (const lead of leads) {
-          const subject = `Your Clarity 360 Leadership Interview Report — ${lead.firstName} ${lead.lastName}`;
-          const emailHtml = `<!DOCTYPE html>
+// ─── Admin: Send Already-Generated Administrator Report ──────────────────────
+// Retrieves a saved report from Firestore and emails it to the relevant leads.
+// Call this only after reviewing the report in the admin dashboard.
+app.post('/admin/send-administrator-report', requireAccessKey, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Firestore not available' });
+  if (!process.env.RESEND_API_KEY) return res.status(503).json({ error: 'RESEND_API_KEY not configured' });
+  try {
+    const { report_id } = req.body;
+    if (!report_id) return res.status(400).json({ error: 'report_id is required' });
+
+    const reportDoc = await db.collection('administrator_reports').doc(report_id).get();
+    if (!reportDoc.exists) return res.status(404).json({ error: 'Report not found' });
+
+    const { reportText, session_ids: reportedSessionIds } = reportDoc.data();
+    if (!reportText) return res.status(400).json({ error: 'Report has no content' });
+
+    const reportedSessionIdSet = new Set(reportedSessionIds || []);
+    const leadsSnap = await db.collection('superintendent_leads').get();
+    const leads = leadsSnap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(l => reportedSessionIdSet.has(l.session_id) && l.email);
+
+    console.log('[admin/send-administrator-report] Found', leads.length, 'leads to email for report', report_id);
+
+    const reportHtml = markdownToHtml(reportText);
+    const results = [];
+
+    for (const lead of leads) {
+      const subject = `Your Clarity 360 Leadership Interview Report — ${lead.firstName} ${lead.lastName}`;
+      const emailHtml = `<!DOCTYPE html>
 <html>
 <head><meta charset="UTF-8"></head>
 <body style="margin:0;padding:0;background:#f8fafc;">
@@ -1402,48 +1449,45 @@ app.post('/admin/generate-administrator-report', requireAccessKey, async (req, r
 </body>
 </html>`;
 
-          try {
-            const emailRes = await fetch('https://api.resend.com/emails', {
-              method: 'POST',
-              headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                from: 'Clarity 360 <noreply@clarity360hq.com>',
-                to: [lead.email],
-                reply_to: 'knoell@engagingpd.com',
-                subject,
-                html: emailHtml,
-              }),
-            });
-            const emailData = await emailRes.json();
-            if (emailRes.ok) {
-              console.log('[admin/generate-administrator-report] Report emailed to', lead.email, '— Resend ID:', emailData.id);
-              // Update lead with reportSentAt
-              await db.collection('superintendent_leads').doc(lead.id).update({
-                reportSentAt: new Date().toISOString(),
-              });
-            } else {
-              console.error('[admin/generate-administrator-report] Resend error for', lead.email, ':', JSON.stringify(emailData));
-            }
-          } catch (emailErr) {
-            console.error('[admin/generate-administrator-report] Failed to send report email to', lead.email, ':', emailErr.message);
-          }
+      try {
+        const emailRes = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: 'Clarity 360 <noreply@clarity360hq.com>',
+            to: [lead.email],
+            reply_to: 'knoell@engagingpd.com',
+            subject,
+            html: emailHtml,
+          }),
+        });
+        const emailData = await emailRes.json();
+        if (emailRes.ok) {
+          console.log('[admin/send-administrator-report] Report emailed to', lead.email, '— Resend ID:', emailData.id);
+          await db.collection('superintendent_leads').doc(lead.id).update({
+            reportSentAt: new Date().toISOString(),
+          });
+          results.push({ email: lead.email, status: 'sent', resendId: emailData.id });
+        } else {
+          console.error('[admin/send-administrator-report] Resend error for', lead.email, ':', JSON.stringify(emailData));
+          results.push({ email: lead.email, status: 'error', detail: emailData });
         }
-      } catch (leadErr) {
-        console.error('[admin/generate-administrator-report] Lead lookup/email failed:', leadErr.message);
-        // Non-fatal — report generation still succeeds
+      } catch (emailErr) {
+        console.error('[admin/send-administrator-report] Failed to send to', lead.email, ':', emailErr.message);
+        results.push({ email: lead.email, status: 'error', detail: emailErr.message });
       }
-    } else {
-      console.log('[admin/generate-administrator-report] Skipping email — RESEND_API_KEY not set or db unavailable');
     }
 
-    // Return in the same shape as /admin/generate-report so the frontend can reuse the same handler
-    return res.json(data);
+    await db.collection('administrator_reports').doc(report_id).update({
+      sentAt: new Date().toISOString(),
+    });
+
+    console.log('[admin/send-administrator-report] Done —', results.filter(r => r.status === 'sent').length, 'sent,', results.filter(r => r.status === 'error').length, 'errors');
+    return res.json({ sent: results.filter(r => r.status === 'sent').length, results });
 
   } catch (e) {
-    console.error('[admin/generate-administrator-report] Exception:', e.message);
-    console.error('[admin/generate-administrator-report] Stack:', e.stack);
-    log.error('Administrator report generation failed', { error: e.message });
-    return res.status(500).json({ error: 'Report generation failed' });
+    console.error('[admin/send-administrator-report] Exception:', e.message);
+    return res.status(500).json({ error: 'Failed to send report', detail: e.message });
   }
 });
 
