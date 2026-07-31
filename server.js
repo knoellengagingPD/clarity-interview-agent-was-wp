@@ -4461,11 +4461,8 @@ app.get('/api/renewedtude/verify-token', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // CLARITY WORKPLACE — isolated endpoints (new product, new collections)
 // ═══════════════════════════════════════════════════════════════════════════
-app.post('/workplace/log_response', async (req, res) => {
+app.post('/workplace/log_response', requireAccessKey, async (req, res) => {
   try {
-    if (req.headers['x-clarity-key'] !== process.env.CLARITY_KEY) {
-      return res.status(401).json({ error: 'unauthorized' });
-    }
     const { session_id, section, question_id, domain, organization,
       department, organization_id, token, rating, followup_text, response_mode } = req.body || {};
     if (!session_id || !question_id) {
