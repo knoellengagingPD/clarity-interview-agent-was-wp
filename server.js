@@ -2890,13 +2890,18 @@ app.post('/fmp/schedule-checkins/:code', requireAccessKey, async (req, res) => {
 // Finds all checkin_schedule documents with a reminder due today (sent=false),
 // sends a reminder email to each participant, and marks the reminder as sent.
 app.post('/fmp/send-checkin-reminder', async (req, res) => {
-  // Verify Vercel cron secret
+  // Verify Vercel cron secret. Fails closed: a missing CRON_SECRET is a server
+  // misconfiguration, not a reason to run the job unauthenticated. Matches the
+  // posture of requireAccessKey.
   const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret) {
-    const authHeader = req.headers['authorization'] || '';
-    if (authHeader !== `Bearer ${cronSecret}`) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
+  if (!cronSecret) {
+    log.error('CRON_SECRET not set on server');
+    return res.status(500).json({ error: 'Server misconfiguration' });
+  }
+  const authHeader = req.headers['authorization'] || '';
+  if (authHeader !== `Bearer ${cronSecret}`) {
+    log.warn('Unauthorized cron request', { ip: req.ip, path: req.path });
+    return res.status(401).json({ error: 'Unauthorized' });
   }
 
   if (!fmpDb) return res.status(503).json({ error: 'Find My Purpose Firestore not available' });
