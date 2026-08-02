@@ -3071,28 +3071,44 @@ function jwtVerify(token, secret) {
     throw new Error('Token expired');
   return payload;
 }
-function requireDistrictJWT(req, res, next) {
+// Pure. Returns a verdict and writes nothing to res, so the caller decides the
+// response and calls next() outside its own try block. Statuses are unchanged
+// from the pre-existing middleware: 401 for every rejection, 500 only for an
+// unset secret. Only the message text returned to the caller is genericized.
+function verifyDistrictToken(req) {
+  const auth = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  if (!auth) return { ok: false, status: 401, error: 'Missing authorization token' };
+  const secret = process.env.AUTH_HMAC_SECRET;
+  if (!secret) { log.error('AUTH_HMAC_SECRET not set'); return { ok: false, status: 500, error: 'Server misconfiguration' }; }
+  let claims;
   try {
-    const auth = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-    if (!auth) return res.status(401).json({ error: 'Missing authorization token' });
-    const secret = process.env.AUTH_HMAC_SECRET;
-    if (!secret) { log.error('AUTH_HMAC_SECRET not set'); return res.status(500).json({ error: 'Server misconfiguration' }); }
-    const claims = jwtVerify(auth, secret);
-    // Signature and expiry alone do not separate an admin token from a district
-    // token, because both are signed with AUTH_HMAC_SECRET. Accept only a
-    // district token here. Tokens minted before this change carry no `typ` and
-    // no `role`, so the absent-typ branch keeps them working for their
-    // remaining 24 hour lifetime.
-    const typ = claims && claims.typ;
-    if ((typ !== undefined && typ !== 'district') || (claims && claims.role !== undefined)) {
-      log.warn('District route rejected non-district token', { ip: req.ip, path: req.path });
-      return res.status(401).json({ error: 'Invalid token type' });
-    }
-    req.districtClaims = claims;
-    next();
+    claims = jwtVerify(auth, secret);
   } catch (e) {
-    return res.status(401).json({ error: e.message });
+    // 'Token expired' stays distinct because the client branches on it to
+    // trigger re-login. Every other reason is generic to the caller and
+    // specific in the log.
+    log.warn('District token rejected', { ip: req.ip, path: req.path, reason: e.message });
+    const expired = e.message === 'Token expired';
+    return { ok: false, status: 401, error: expired ? 'Token expired' : 'Invalid or expired token' };
   }
+  // Signature and expiry alone do not separate an admin token from a district
+  // token, because both are signed with AUTH_HMAC_SECRET. Accept only a
+  // district token here. Tokens minted before this change carry no `typ` and
+  // no `role`, so the absent-typ branch keeps them working for their
+  // remaining 24 hour lifetime.
+  const typ = claims && claims.typ;
+  if ((typ !== undefined && typ !== 'district') || (claims && claims.role !== undefined)) {
+    log.warn('District token rejected', { ip: req.ip, path: req.path, reason: 'wrong token type' });
+    return { ok: false, status: 401, error: 'Invalid or expired token' };
+  }
+  return { ok: true, claims };
+}
+
+function requireDistrictJWT(req, res, next) {
+  const verdict = verifyDistrictToken(req);
+  if (!verdict.ok) return res.status(verdict.status).json({ error: verdict.error });
+  req.districtClaims = verdict.claims;
+  next(); // outside any try: a downstream throw must not become a 401
 }
 
 // ─── Admin auth (WIA-1-004) ───────────────────────────────────────────────────
@@ -3115,13 +3131,18 @@ function constantTimeEquals(supplied, expected) {
 // instance keeps its own counter. It raises the cost of online password guessing
 // without capping it globally.
 app.post('/admin/login', rateLimit({ windowMs: 15 * 60_000, max: 5 }), (req, res) => {
+  // Set before any branch so every response from this route carries it, token
+  // or not, and no proxy or browser cache retains the token.
+  res.setHeader('Cache-Control', 'no-store');
   const expected = process.env.ADMIN_PASSWORD;
   const secret   = process.env.AUTH_HMAC_SECRET;
   if (!expected) { log.error('ADMIN_PASSWORD not set on server'); return res.status(500).json({ error: 'Server misconfiguration' }); }
   if (!secret)   { log.error('AUTH_HMAC_SECRET not set');        return res.status(500).json({ error: 'Server misconfiguration' }); }
 
-  const supplied = (req.body && req.body.password) || '';
-  if (!supplied || !constantTimeEquals(supplied, expected)) {
+  // Reject a non-string body value before any coercion. A JSON object or array
+  // must never reach String(...) in the comparison path.
+  const supplied = req.body && req.body.password;
+  if (typeof supplied !== 'string' || supplied.length === 0 || !constantTimeEquals(supplied, expected)) {
     log.warn('Admin login failed', { ip: req.ip });
     return res.status(401).json({ error: 'Invalid credentials' });
   }
@@ -3132,29 +3153,53 @@ app.post('/admin/login', rateLimit({ windowMs: 15 * 60_000, max: 5 }), (req, res
   return res.json({ token, expiresIn: ADMIN_TOKEN_TTL_SECONDS });
 });
 
-function requireAdminJWT(req, res, next) {
+// Pure. Returns a verdict and writes nothing to res, so the caller decides the
+// response and calls next() outside its own try block.
+function verifyAdminToken(req) {
+  const auth = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  if (!auth) return { ok: false, status: 401, error: 'Missing authorization token' };
+  const secret = process.env.AUTH_HMAC_SECRET;
+  if (!secret) { log.error('AUTH_HMAC_SECRET not set'); return { ok: false, status: 500, error: 'Server misconfiguration' }; }
+  let claims;
   try {
-    const auth = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-    if (!auth) return res.status(401).json({ error: 'Missing authorization token' });
-    const secret = process.env.AUTH_HMAC_SECRET;
-    if (!secret) { log.error('AUTH_HMAC_SECRET not set'); return res.status(500).json({ error: 'Server misconfiguration' }); }
-    const claims = jwtVerify(auth, secret);
-    if (claims.typ !== 'admin' || claims.role !== 'admin' || claims.districtId)
-      return res.status(401).json({ error: 'Invalid token type' });
-    req.adminClaims = claims;
-    next();
+    claims = jwtVerify(auth, secret);
   } catch (e) {
-    return res.status(401).json({ error: e.message });
+    // 'Token expired' stays distinct because the dashboard branches on it to
+    // trigger re-login. Every other reason is generic to the caller and
+    // specific in the log.
+    log.warn('Admin token rejected', { ip: req.ip, path: req.path, reason: e.message });
+    const expired = e.message === 'Token expired';
+    return { ok: false, status: 401, error: expired ? 'Token expired' : 'Invalid or expired token' };
   }
+  // districtId is compared against undefined rather than tested for truthiness,
+  // so a token carrying districtId: '' or districtId: 0 is still rejected.
+  if (claims.typ !== 'admin' || claims.role !== 'admin' || claims.districtId !== undefined) {
+    log.warn('Admin token rejected', { ip: req.ip, path: req.path, reason: 'wrong token type' });
+    return { ok: false, status: 401, error: 'Invalid or expired token' };
+  }
+  return { ok: true, claims };
 }
 
-// Transitional. Accepts a valid admin JWT, or the legacy x-clarity-key, and
-// nothing else. No branch calls next() itself, so a missing credential cannot
-// reach a handler. Removed from the Clarity 360 admin routes in PR C; the FMP
-// admin routes keep it until the standalone FMP repo is mirrored (NEW-A).
+function requireAdminJWT(req, res, next) {
+  const verdict = verifyAdminToken(req);
+  if (!verdict.ok) return res.status(verdict.status).json({ error: verdict.error });
+  req.adminClaims = verdict.claims;
+  next(); // outside any try: a downstream throw must not become a 401
+}
+
+// Transitional. Bearer-wins precedence: an Authorization header decides the
+// request outright and an accompanying x-clarity-key is ignored. No branch
+// calls next() itself, so a missing credential cannot reach a handler. Removed
+// from the Clarity 360 admin routes in PR C; the FMP admin routes keep it until
+// the standalone FMP repo is mirrored (NEW-A).
 function requireAdminOrAccessKey(req, res, next) {
   const hasBearer = /^Bearer\s+/i.test(req.headers.authorization || '');
   const hasKey    = Boolean(req.header('x-clarity-key'));
+  if (hasBearer && hasKey) {
+    // No caller should send both. Make the mixed state observable rather than
+    // silent, then apply precedence.
+    log.warn('Both admin credentials presented', { ip: req.ip, path: req.path });
+  }
   if (hasBearer) return requireAdminJWT(req, res, next);
   if (hasKey)    return requireAccessKey(req, res, next);
   log.warn('Unauthorized request', { ip: req.ip, path: req.path });
