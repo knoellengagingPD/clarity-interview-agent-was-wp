@@ -283,13 +283,27 @@ RULES:
 }
 
 // ─── In-Memory Rate Limiter ───────────────────────────────────────────────────
+// Counters are keyed by bucket plus IP. Keying by IP alone gave every
+// rate-limited route one shared counter while each route compared that count
+// against its own max [NEW-G], with consequences in both directions:
+// participant traffic from a shared egress IP such as a school NAT could lock an
+// operator out of /admin/login, and a login burst could 429 participants
+// mid-interview. The shared key also let whichever route ran first fix resetAt
+// for the rest, silently replacing the 15-minute admin window with a 60-second
+// one. Separate keys fix both.
+//
+// bucket defaults to req.path. Pass an explicit bucket for any route carrying a
+// path parameter, so that one logical bucket does not fragment per parameter
+// value and grow the store without bound.
 const rateLimitStore = new Map();
 
-function rateLimit({ windowMs = 60_000, max = 20 } = {}) {
+function rateLimit({ windowMs = 60_000, max = 20, bucket } = {}) {
   return (req, res, next) => {
     const ip = req.ip || req.connection.remoteAddress || 'unknown';
+    const scope = bucket || req.path;
+    const key = `${scope}:${ip}`;
     const now = Date.now();
-    const entry = rateLimitStore.get(ip) || { count: 0, resetAt: now + windowMs };
+    const entry = rateLimitStore.get(key) || { count: 0, resetAt: now + windowMs };
 
     if (now > entry.resetAt) {
       entry.count = 0;
@@ -297,13 +311,13 @@ function rateLimit({ windowMs = 60_000, max = 20 } = {}) {
     }
 
     entry.count++;
-    rateLimitStore.set(ip, entry);
+    rateLimitStore.set(key, entry);
 
     res.setHeader('X-RateLimit-Limit', max);
     res.setHeader('X-RateLimit-Remaining', Math.max(0, max - entry.count));
 
     if (entry.count > max) {
-      log.warn('Rate limit exceeded', { ip });
+      log.warn('Rate limit exceeded', { ip, bucket: scope });
       return res.status(429).json({ error: 'Too many requests. Please slow down.' });
     }
 
@@ -313,8 +327,8 @@ function rateLimit({ windowMs = 60_000, max = 20 } = {}) {
 
 setInterval(() => {
   const now = Date.now();
-  for (const [ip, entry] of rateLimitStore.entries()) {
-    if (now > entry.resetAt) rateLimitStore.delete(ip);
+  for (const [key, entry] of rateLimitStore.entries()) {
+    if (now > entry.resetAt) rateLimitStore.delete(key);
   }
 }, 5 * 60_000);
 
