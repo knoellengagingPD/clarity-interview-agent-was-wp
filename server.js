@@ -1086,7 +1086,7 @@ app.get('/admin/check-renewals', requireAdminJWT, async (req, res) => {
 
 // ─── Admin: Permanently delete a superintendent_interview session ──────────────
 // DELETE /admin/sessions/:sessionId — hard-deletes all Firestore response docs
-// for the given session_id. Authenticated with CLARITY_ACCESS_KEY.
+// for the given session_id. Requires an admin JWT (WIA-1-004 PR C).
 app.delete('/admin/sessions/:sessionId', requireAdminJWT, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Firestore not available' });
   try {
@@ -3644,7 +3644,7 @@ app.get('/school-climate/token/:token', async (req, res) => {
 
 // ─── School Climate: Create Token ─────────────────────────────────────────────
 // POST /school-climate/tokens
-// Requires access key. Accepts { school_name, school_id, district, role }.
+// Requires an admin JWT (WIA-1-004 PR C). Accepts { school_name, school_id, district, role }.
 // Generates a unique SCL-XXXXXX token and stores it in climate_tokens collection.
 app.post('/school-climate/tokens', requireAdminJWT, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
@@ -3850,7 +3850,7 @@ app.post('/school-climate/send-deployment-email', requireAdminJWT, async (req, r
 
 // ─── School Climate: Sessions & Scores ────────────────────────────────────────
 // GET /school-climate/sessions?school_id=&role=&start_date=&end_date=
-// Requires access key. Returns sessions grouped by role with per-question and
+// Requires an admin JWT (WIA-1-004 PR C). Returns sessions grouped by role with per-question and
 // per-domain average scores. Domain is derived from the question_id prefix
 // (e.g. "safety_3" → safety domain, "engagement_1" → engagement domain).
 app.get('/school-climate/sessions', requireAdminJWT, async (req, res) => {
@@ -4683,7 +4683,7 @@ app.get('/workplace/validate-token/:token', async (req, res) => {
 
 // ─── Workplace Climate: Create Token ──────────────────────────────────────────
 // POST /workplace/tokens
-// Requires x-clarity-key. Body: { organization_name, organization_id, department, is_test }.
+// Requires an admin JWT (WIA-1-004 PR C). Body: { organization_name, organization_id, department, is_test }.
 // Generates unique WRK-XXXXXX and stores it in workplace_tokens (doc id = token).
 app.post('/workplace/tokens', requireAdminJWT, async (req, res) => {
   try {
@@ -4745,7 +4745,7 @@ app.post('/workplace/tokens', requireAdminJWT, async (req, res) => {
 
 // ─── Workplace Climate: Stats & Sessions ──────────────────────────────────────
 // GET /workplace/stats?organization_id=&start_date=&end_date=&hide_test=
-// Requires x-clarity-key. Queries workplace_climate collection, groups by session_id,
+// Requires an admin JWT (WIA-1-004 PR C). Queries workplace_climate collection, groups by session_id,
 // and computes per-question / per-domain averages using a label→numeric scale map.
 const WP_SCALE_MAP = {
   'strongly disagree': 1, 'somewhat disagree': 2, 'somewhat agree': 3, 'strongly agree': 4,
