@@ -774,7 +774,7 @@ app.post('/school-climate/session-complete', requireAccessKey, async (req, res) 
 });
 
 // ─── Admin: Clarity 360 Sessions ─────────────────────────────────────────────
-app.get('/admin/sessions', requireAdminOrAccessKey, async (req, res) => {
+app.get('/admin/sessions', requireAdminJWT, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
   try {
     const { section, start, end, hide_test, show_archived } = req.query;
@@ -846,7 +846,7 @@ app.get('/admin/sessions', requireAdminOrAccessKey, async (req, res) => {
 });
 
 // ─── Admin: Clarity 360 Generate Report ──────────────────────────────────────
-app.post('/admin/generate-report', requireAdminOrAccessKey, async (req, res) => {
+app.post('/admin/generate-report', requireAdminJWT, async (req, res) => {
   try {
     const { prompt } = req.body;
     if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
@@ -963,7 +963,7 @@ app.post('/admin/store-lead', requireAccessKey, async (req, res) => {
 // ─── Admin: District Subscriptions CRUD ──────────────────────────────────────
 
 // GET /admin/subscriptions — list all documents in district_subscriptions
-app.get('/admin/subscriptions', requireAdminOrAccessKey, async (req, res) => {
+app.get('/admin/subscriptions', requireAdminJWT, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Firestore not available' });
   try {
     const snap = await db.collection('district_subscriptions').orderBy('createdAt', 'desc').get();
@@ -976,7 +976,7 @@ app.get('/admin/subscriptions', requireAdminOrAccessKey, async (req, res) => {
 });
 
 // POST /admin/subscriptions — create a new district_subscriptions document
-app.post('/admin/subscriptions', requireAdminOrAccessKey, async (req, res) => {
+app.post('/admin/subscriptions', requireAdminJWT, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Firestore not available' });
   try {
     const {
@@ -1010,7 +1010,7 @@ app.post('/admin/subscriptions', requireAdminOrAccessKey, async (req, res) => {
 });
 
 // PATCH /admin/subscriptions/:id — update an existing district_subscriptions document
-app.patch('/admin/subscriptions/:id', requireAdminOrAccessKey, async (req, res) => {
+app.patch('/admin/subscriptions/:id', requireAdminJWT, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Firestore not available' });
   try {
     const { id } = req.params;
@@ -1041,7 +1041,7 @@ app.patch('/admin/subscriptions/:id', requireAdminOrAccessKey, async (req, res) 
 // GET /admin/check-renewals — flag district_subscriptions approaching renewal within 30 days
 // Sets renewalReminder: true on any active subscription whose subscriptionEnd is within 30 days.
 // Returns a JSON summary of flagged districts.
-app.get('/admin/check-renewals', requireAdminOrAccessKey, async (req, res) => {
+app.get('/admin/check-renewals', requireAdminJWT, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Firestore not available' });
   try {
     const now = new Date();
@@ -1087,7 +1087,7 @@ app.get('/admin/check-renewals', requireAdminOrAccessKey, async (req, res) => {
 // ─── Admin: Permanently delete a superintendent_interview session ──────────────
 // DELETE /admin/sessions/:sessionId — hard-deletes all Firestore response docs
 // for the given session_id. Authenticated with CLARITY_ACCESS_KEY.
-app.delete('/admin/sessions/:sessionId', requireAdminOrAccessKey, async (req, res) => {
+app.delete('/admin/sessions/:sessionId', requireAdminJWT, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Firestore not available' });
   try {
     const { sessionId } = req.params;
@@ -1223,7 +1223,7 @@ app.post('/admin/notify-interview-complete', requireAccessKey, async (req, res) 
 // fetches superintendent_interview responses directly from Firestore, assembles
 // the prompt server-side, and calls Claude — so the frontend never has to build
 // the prompt itself.  Accepts optional { session_ids, start, end } filters.
-app.post('/admin/generate-administrator-report', requireAdminOrAccessKey, async (req, res) => {
+app.post('/admin/generate-administrator-report', requireAdminJWT, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
   try {
     const { session_ids, start, end } = req.body;
@@ -1462,6 +1462,16 @@ app.post('/admin/generate-administrator-report', requireAdminOrAccessKey, async 
   }
 });
 
+// Class A2 - FMP admin routes, transitional dual credential acceptance.
+// WIA-1-004 PR C moved the 26 Clarity 360 admin routes to requireAdminJWT and
+// removed legacy x-clarity-key acceptance from them. The three FMP admin routes
+// below, plus the four FMP client-management routes further down, stay on
+// requireAdminOrAccessKey because their only consumer is the admin dashboard in
+// the standalone repo knoellengagingPD/find-my-purpose-app, which is not
+// mirrored and still sends x-clarity-key only. Removing legacy key acceptance
+// here would break that dashboard outright.
+// Tracked as a follow-on to NEW-A: mirror the FMP repo, migrate its dashboard to
+// the bearer token, then move these seven routes to requireAdminJWT as well.
 // ─── FMP Admin: Sessions ──────────────────────────────────────────────────────
 app.get('/fmp/admin/sessions', requireAdminOrAccessKey, async (req, res) => {
   if (!fmpDb) return res.status(503).json({ error: 'Find My Purpose Firestore not available' });
@@ -1624,6 +1634,9 @@ app.get('/fmp/admin/participants', requireAdminOrAccessKey, async (req, res) => 
   }
 });
 
+// Class A2 continued - these four routes stay on requireAdminOrAccessKey for the
+// same reason as the FMP admin routes above: the consumer lives in the unmirrored
+// repo knoellengagingPD/find-my-purpose-app. Tracking item NEW-A.
 // ─── FMP Client Management ────────────────────────────────────────────────────
 
 // GET /fmp/clients — list all clients
@@ -1736,7 +1749,7 @@ app.get('/fmp/clients/:id/usage', requireAdminOrAccessKey, async (req, res) => {
 });
 
 // ─── Send Follow-Up Email via Resend ─────────────────────────────────────────
-app.post('/send-followup', requireAdminOrAccessKey, async (req, res) => {
+app.post('/send-followup', requireAdminJWT, async (req, res) => {
   const { email, selections = [], sessionId = 'unknown', interviewType = 'Administrator Interview' } = req.body;
 
   if (!email || typeof email !== 'string' || !email.includes('@')) {
@@ -3360,7 +3373,7 @@ app.get('/district/:districtId/data', requireDistrictJWT, async (req, res) => {
 
 // ─── POST /district/portal ─────────────────────────────────────────────────────
 // Admin-protected. Creates a district_portals document.
-app.post('/district/portal', requireAdminOrAccessKey, async (req, res) => {
+app.post('/district/portal', requireAdminJWT, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Database unavailable' });
   const { districtId, districtName, contactEmail } = req.body || {};
   if (!districtId || !districtName || !contactEmail) {
@@ -3383,7 +3396,7 @@ app.post('/district/portal', requireAdminOrAccessKey, async (req, res) => {
 // ─── PATCH /district/:id/portal ───────────────────────────────────────────────
 // Admin-protected. Updates mutable fields on a district portal.
 // Currently supports: textFallbackEnabled (boolean).
-app.patch('/district/:districtId/portal', requireAdminOrAccessKey, async (req, res) => {
+app.patch('/district/:districtId/portal', requireAdminJWT, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Database unavailable' });
   const { districtId } = req.params;
   const { textFallbackEnabled } = req.body || {};
@@ -3405,7 +3418,7 @@ app.patch('/district/:districtId/portal', requireAdminOrAccessKey, async (req, r
 
 // ─── GET /district/portals ─────────────────────────────────────────────────────
 // Admin-protected. Returns all district portals (summary fields only).
-app.get('/district/portals', requireAdminOrAccessKey, async (req, res) => {
+app.get('/district/portals', requireAdminJWT, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Database unavailable' });
   try {
     const snap = await db.collection('district_portals').get();
@@ -3422,7 +3435,7 @@ app.get('/district/portals', requireAdminOrAccessKey, async (req, res) => {
 
 // ─── POST /district/:districtId/deployment ─────────────────────────────────────
 // Admin-protected. Adds or updates a deployment entry in district_portals.
-app.post('/district/:districtId/deployment', requireAdminOrAccessKey, async (req, res) => {
+app.post('/district/:districtId/deployment', requireAdminJWT, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Database unavailable' });
   const { districtId } = req.params;
   const { schoolName, schoolId, roles, tokenIds, deploymentId } = req.body || {};
@@ -3455,7 +3468,7 @@ app.post('/district/:districtId/deployment', requireAdminOrAccessKey, async (req
 
 // ─── PATCH /district/:districtId/deployment/:deploymentId/close ────────────────
 // Admin-protected. Closes a deployment and emails the superintendent.
-app.patch('/district/:districtId/deployment/:deploymentId/close', requireAdminOrAccessKey, async (req, res) => {
+app.patch('/district/:districtId/deployment/:deploymentId/close', requireAdminJWT, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Database unavailable' });
   const { districtId, deploymentId } = req.params;
   try {
@@ -3498,7 +3511,7 @@ app.patch('/district/:districtId/deployment/:deploymentId/close', requireAdminOr
 
 // ─── POST /district/:districtId/welcome-email ──────────────────────────────────
 // Admin-protected. Sends a welcome email to the superintendent.
-app.post('/district/:districtId/welcome-email', requireAdminOrAccessKey, async (req, res) => {
+app.post('/district/:districtId/welcome-email', requireAdminJWT, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Database unavailable' });
   const { districtId } = req.params;
   if (!process.env.RESEND_API_KEY) return res.status(503).json({ error: 'RESEND_API_KEY not set' });
@@ -3544,7 +3557,7 @@ app.post('/district/:districtId/welcome-email', requireAdminOrAccessKey, async (
 // ─── POST /district/:districtId/report ────────────────────────────────────────
 // Admin-protected. Appends a generated report to district_portals.reports[].
 // Body: { deploymentId, type: 'brief'|'detailed', content, available }
-app.post('/district/:districtId/report', requireAdminOrAccessKey, async (req, res) => {
+app.post('/district/:districtId/report', requireAdminJWT, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Database unavailable' });
   const { districtId } = req.params;
   const { deploymentId, type, content, available } = req.body || {};
@@ -3633,7 +3646,7 @@ app.get('/school-climate/token/:token', async (req, res) => {
 // POST /school-climate/tokens
 // Requires access key. Accepts { school_name, school_id, district, role }.
 // Generates a unique SCL-XXXXXX token and stores it in climate_tokens collection.
-app.post('/school-climate/tokens', requireAdminOrAccessKey, async (req, res) => {
+app.post('/school-climate/tokens', requireAdminJWT, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
   try {
     const { school_name, school_id, district, role, is_test } = req.body;
@@ -3693,7 +3706,7 @@ app.post('/school-climate/tokens', requireAdminOrAccessKey, async (req, res) => 
 // POST /school-climate/send-deployment-email
 // Sends a role-specific survey invitation email to a recipient. Includes the
 // full question list so participants can review before starting.
-app.post('/school-climate/send-deployment-email', requireAdminOrAccessKey, async (req, res) => {
+app.post('/school-climate/send-deployment-email', requireAdminJWT, async (req, res) => {
   console.log('RESEND_API_KEY present:', !!process.env.RESEND_API_KEY);
   console.log('RESEND_API_KEY length:', process.env.RESEND_API_KEY?.length);
   const { role, token, school_name, recipient_email } = req.body;
@@ -3840,7 +3853,7 @@ app.post('/school-climate/send-deployment-email', requireAdminOrAccessKey, async
 // Requires access key. Returns sessions grouped by role with per-question and
 // per-domain average scores. Domain is derived from the question_id prefix
 // (e.g. "safety_3" → safety domain, "engagement_1" → engagement domain).
-app.get('/school-climate/sessions', requireAdminOrAccessKey, async (req, res) => {
+app.get('/school-climate/sessions', requireAdminJWT, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
   try {
     const { school_id, role, start_date, end_date, hide_test, show_archived } = req.query;
@@ -4093,7 +4106,7 @@ app.post('/school-climate/flag-session', async (req, res) => {
 // ─── School Climate: Crisis Flags by School ───────────────────────────────────
 // GET /school-climate/crisis-flags?school_id=
 // Returns count of flagged sessions for a given school. Admin-authenticated.
-app.get('/school-climate/crisis-flags', requireAdminOrAccessKey, async (req, res) => {
+app.get('/school-climate/crisis-flags', requireAdminJWT, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Firestore not available' });
   try {
     const { school_id } = req.query;
@@ -4112,7 +4125,7 @@ app.get('/school-climate/crisis-flags', requireAdminOrAccessKey, async (req, res
 // ─── School Climate: List unique school IDs ───────────────────────────────────
 // GET /school-climate/school-ids
 // Returns sorted list of all unique school_id values in climate_tokens.
-app.get('/school-climate/school-ids', requireAdminOrAccessKey, async (req, res) => {
+app.get('/school-climate/school-ids', requireAdminJWT, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Firestore not available' });
   try {
     const snap = await db.collection('climate_tokens').get();
@@ -4127,7 +4140,7 @@ app.get('/school-climate/school-ids', requireAdminOrAccessKey, async (req, res) 
 // ─── School Climate: Archive / Unarchive Session ──────────────────────────────
 // PATCH /school-climate/sessions/:sessionId
 // Body: { school_id, action: 'archive' | 'unarchive' }
-app.patch('/school-climate/sessions/:sessionId', requireAdminOrAccessKey, async (req, res) => {
+app.patch('/school-climate/sessions/:sessionId', requireAdminJWT, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
   try {
     const { sessionId } = req.params;
@@ -4158,7 +4171,7 @@ app.patch('/school-climate/sessions/:sessionId', requireAdminOrAccessKey, async 
 // ─── Clarity 360: Archive / Unarchive Session ─────────────────────────────────
 // PATCH /admin/sessions/:sessionId
 // Body: { action: 'archive' | 'unarchive' }
-app.patch('/admin/sessions/:sessionId', requireAdminOrAccessKey, async (req, res) => {
+app.patch('/admin/sessions/:sessionId', requireAdminJWT, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
   try {
     const { sessionId } = req.params;
@@ -4672,7 +4685,7 @@ app.get('/workplace/validate-token/:token', async (req, res) => {
 // POST /workplace/tokens
 // Requires x-clarity-key. Body: { organization_name, organization_id, department, is_test }.
 // Generates unique WRK-XXXXXX and stores it in workplace_tokens (doc id = token).
-app.post('/workplace/tokens', requireAdminOrAccessKey, async (req, res) => {
+app.post('/workplace/tokens', requireAdminJWT, async (req, res) => {
   try {
     const { organization_name, organization_id, department, is_test } = req.body || {};
     if (!organization_name || typeof organization_name !== 'string') {
@@ -4752,7 +4765,7 @@ const WP_DOMAIN_MAP = {
 };
 const WP_RATED_QUESTIONS = 16;
 
-app.get('/workplace/stats', requireAdminOrAccessKey, async (req, res) => {
+app.get('/workplace/stats', requireAdminJWT, async (req, res) => {
   try {
     const { organization_id, start_date, end_date, hide_test } = req.query;
     if (!organization_id) {
@@ -4886,7 +4899,7 @@ app.get('/workplace/stats', requireAdminOrAccessKey, async (req, res) => {
 //   productType: 'school_climate' | 'workplace'
 //   role: 'teachers'|'students'|'staff'|'parents' (school_climate) or 'all' (workplace)
 // Returns: binary PDF  Content-Type: application/pdf
-app.post('/api/generate-quantitative-report', requireAdminOrAccessKey, async (req, res) => {
+app.post('/api/generate-quantitative-report', requireAdminJWT, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
 
   const { schoolId, role, productType } = req.body;
