@@ -59,6 +59,26 @@ function cacheInvalidatePrefix(prefix) {
 const CACHE_TTL_HEALTH   = 5  * 60 * 1000; //  5 minutes — health endpoint
 const CACHE_TTL_SESSIONS = 2  * 60 * 1000; //  2 minutes — session list endpoints
 
+// ─── Random value generation (CIA-1-002) ──────────────────────────────────────
+// Every random value in this file goes through one of these two helpers, so
+// `Math.random` appears nowhere: it is not cryptographically secure, and V8
+// implements it as xorshift128+ whose internal state is recoverable from a short
+// run of consecutive outputs. Participant tokens and the district access code are
+// bearer credentials, so they need a CSPRNG.
+//
+// crypto.randomInt is used rather than randomBytes with a modulo, because a
+// modulo over a byte biases the low indices of any alphabet whose length does
+// not divide 256. randomInt rejects out-of-range draws internally, so every
+// character is uniform over the alphabet.
+
+// Numeric codes call crypto.randomInt directly; only the alphabet case needs a
+// helper.
+
+/** A CSPRNG string of `length` characters drawn uniformly from `chars`. */
+function randomCode(chars, length) {
+  return Array.from({ length }, () => chars[crypto.randomInt(chars.length)]).join('');
+}
+
 // ─── App URLs ─────────────────────────────────────────────────────────────────
 // FMP_APP_URL must be set in the server's environment variables.
 // Both findmypurpose.clarity360hq.com and engagingpurpose.com point to the
@@ -3253,7 +3273,11 @@ app.post('/district/request-access', async (req, res) => {
     if (snap.exists) {
       const data = snap.data();
       if (data.contactEmail && data.contactEmail.toLowerCase() === email.toLowerCase().trim()) {
-        const code   = String(Math.floor(100000 + Math.random() * 900000));
+        // CIA-1-002: this code gates a 24-hour district JWT, so it must come from
+        // a CSPRNG. Same 100000-999999 range as before; randomInt's max is
+        // exclusive. The 900,000-value keyspace is bounded by the attempt counter
+        // tracked as CIA-1-001, not by this line.
+        const code   = String(crypto.randomInt(100000, 1000000));
         const expiry = new Date(Date.now() + 15 * 60 * 1000);
         await ref.update({ accessCode: code, accessCodeExpiry: expiry });
         if (process.env.RESEND_API_KEY) {
@@ -3445,7 +3469,10 @@ app.post('/district/:districtId/deployment', requireAdminJWT, async (req, res) =
     if (!snap.exists) return res.status(404).json({ error: 'District portal not found' });
     const data      = snap.data();
     const deployments = data.deployments || [];
-    const depId     = deploymentId || `dep-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    // CIA-1-002: not a credential, converted anyway so `Math.random` appears
+    // nowhere in this file and the planned no-restricted-properties lint rule
+    // needs no per-site exception. Same base36 alphabet and 5-character length.
+    const depId     = deploymentId || `dep-${Date.now()}-${randomCode('abcdefghijklmnopqrstuvwxyz0123456789', 5)}`;
     // Find existing active deployment for this school, or create a new one
     const existingIdx = deployments.findIndex(d => d.schoolId === schoolId && d.status === 'active');
     if (existingIdx >= 0) {
@@ -3671,7 +3698,7 @@ app.post('/school-climate/tokens', requireAdminJWT, async (req, res) => {
     let token;
     let attempts = 0;
     do {
-      const rand = Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+      const rand = randomCode(chars, 6); // CIA-1-002: CSPRNG, same alphabet and length
       token = `SCL-${rand}`;
       const existing = await db.collection('climate_tokens').where('token', '==', token).limit(1).get();
       if (existing.empty) break;
@@ -4473,7 +4500,7 @@ app.get('/api/renewedtude/verify-session', async (req, res) => {
     } else {
       // Generate a new unique token: RT- + 6 random uppercase alphanumeric chars
       const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-      const rand = Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+      const rand = randomCode(chars, 6); // CIA-1-002: CSPRNG, same alphabet and length
       token = `RT-${rand}`;
 
       await db.collection('renewedtude_tokens').add({
@@ -4707,7 +4734,7 @@ app.post('/workplace/tokens', requireAdminJWT, async (req, res) => {
     let token;
     let attempts = 0;
     do {
-      const rand = Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+      const rand = randomCode(chars, 6); // CIA-1-002: CSPRNG, same alphabet and length
       token = `WRK-${rand}`;
       const existing = await admin.firestore().collection('workplace_tokens').doc(token).get();
       if (!existing.exists) break;
