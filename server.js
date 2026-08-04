@@ -4234,31 +4234,95 @@ app.get('/school-climate/sessions', requireAdminJWT, async (req, res) => {
 // Stores crisis_flag: true in Firestore and fires a Resend alert email.
 // Intentionally unauthenticated (no CLARITY_KEY required) so it can be called
 // from the participant-facing page without exposing the admin key to the client.
-app.post('/school-climate/flag-session', async (req, res) => {
-  const { session_id, token, school_id, school_name } = req.body;
-  if (!session_id || !token) {
+//
+// CIA-1-003: the route stays unauthenticated by design - a participant in crisis
+// must not need a credential - so it is bounded, bound, and validated instead of
+// guarded. The 988 resource is surfaced client-side before this call, so this is a
+// notification path and rejecting an unbindable flag costs the participant nothing.
+// The governing rule: no alert without a verified token binding, and once a flag is
+// bound the alert always goes out.
+const CRISIS_SESSION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const CRISIS_TOKEN_RE      = /^SCL-[A-Z0-9]{6}$/;
+
+app.post('/school-climate/flag-session',
+  rateLimit({ windowMs: 60_000, max: 3, bucket: 'crisis-flag' }),
+  async (req, res) => {
+  const { session_id, token } = req.body || {};
+
+  // Shape validation, not presence validation: a non-string here would corrupt the
+  // document shape every reader assumes, and session_id becomes a document ID below.
+  if (typeof session_id !== 'string' || typeof token !== 'string') {
+    return res.status(400).json({ error: 'session_id and token are required' });
+  }
+  const normalizedToken = token.trim().toUpperCase();
+  if (!CRISIS_SESSION_ID_RE.test(session_id) || !CRISIS_TOKEN_RE.test(normalizedToken)) {
     return res.status(400).json({ error: 'session_id and token are required' });
   }
 
-  // Write crisis flag to Firestore (best-effort — don't fail the response if db is down)
-  if (db) {
-    try {
-      await db.collection('crisis_flags').add({
-        session_id,
-        token,
-        school_id:   school_id   || 'unknown',
-        school_name: school_name || 'unknown',
-        crisis_flag: true,
-        flaggedAt:   new Date().toISOString(),
-      });
-      console.log('[school-climate/flag-session] Crisis flag written for session', session_id, 'at school', school_name);
-    } catch (e) {
+  // A flag that cannot be bound to an issued token is not recorded and not alerted.
+  if (!db) {
+    log.error('Crisis flag rejected: Firestore unavailable, flag cannot be bound');
+    return res.status(503).json({ error: 'Crisis flag service unavailable' });
+  }
+
+  let tokenData;
+  try {
+    const tokenSnap = await db.collection('climate_tokens')
+      .where('token', '==', normalizedToken)
+      .limit(1)
+      .get();
+
+    if (tokenSnap.empty) {
+      // Log a prefix only: the token is a guessable credential and this is an
+      // unauthenticated route, so the full value stays out of the log.
+      log.warn('Crisis flag rejected: token not issued', { tokenPrefix: normalizedToken.slice(0, 6) });
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+    tokenData = tokenSnap.docs[0].data();
+  } catch (e) {
+    log.error('Crisis flag token lookup failed', { error: e.message });
+    return res.status(503).json({ error: 'Crisis flag service unavailable' });
+  }
+
+  // School identity comes from the token document. The body is no longer trusted for
+  // it, which is what stops a flag being fabricated against an arbitrary school.
+  // Any issued token is accepted regardless of status or is_test: suppressing an
+  // alert because a token was archived mid-interview fails toward silence on a
+  // safety path. Both fields are recorded so a reader can filter.
+  const school_id   = tokenData.school_id   || 'unknown';
+  const school_name = tokenData.school_name || 'unknown';
+
+  // One document and one email per session. create() on a deterministic ID fails
+  // with ALREADY_EXISTS (gRPC 6) on a repeat, which is atomic where read-then-write
+  // would race.
+  let alreadyFlagged = false;
+  try {
+    await db.collection('crisis_flags').doc(`crisis_${session_id}`).create({
+      session_id,
+      token: normalizedToken,
+      school_id,
+      school_name,
+      district:     tokenData.district || '',
+      role:         tokenData.role     || 'unknown',
+      token_status: tokenData.status   || 'unknown',
+      is_test:      tokenData.is_test === true,
+      crisis_flag:  true,
+      flaggedAt:    new Date().toISOString(),
+    });
+    console.log('[school-climate/flag-session] Crisis flag written for session', session_id, 'at school', school_name);
+  } catch (e) {
+    if (e.code === 6) {
+      alreadyFlagged = true;
+      log.info('Crisis flag already recorded for session, skipping duplicate alert', { session_id });
+    } else {
+      // The binding succeeded, so this is a genuine flag whose write failed. Keep the
+      // original best-effort posture and still raise the alert.
       console.error('[school-climate/flag-session] Firestore write failed:', e.message);
     }
   }
 
-  // Send alert email via Resend (best-effort)
-  if (process.env.RESEND_API_KEY) {
+  // Send alert email via Resend (best-effort), at most once per session
+  if (!alreadyFlagged && process.env.RESEND_API_KEY) {
     try {
       const emailRes = await fetch('https://api.resend.com/emails', {
         method: 'POST',
@@ -4272,7 +4336,7 @@ app.post('/school-climate/flag-session', async (req, res) => {
 <p>No identifying information or transcript content is available.</p>
 <p>Please notify the district contact so they can activate their crisis protocols.</p>
 <hr>
-<p style="color:#888;font-size:12px;">Session token: ${escapeHtml(token)} &nbsp;|&nbsp; School ID: ${escapeHtml(school_id || 'unknown')}</p>`,
+<p style="color:#888;font-size:12px;">Session token: ${escapeHtml(normalizedToken)} &nbsp;|&nbsp; School ID: ${escapeHtml(school_id)}</p>`,
         }),
       });
       const emailData = await emailRes.json();
@@ -4284,7 +4348,7 @@ app.post('/school-climate/flag-session', async (req, res) => {
     } catch (e) {
       console.error('[school-climate/flag-session] Email send failed:', e.message);
     }
-  } else {
+  } else if (!alreadyFlagged) {
     console.warn('[school-climate/flag-session] RESEND_API_KEY not set — skipping alert email');
   }
 
