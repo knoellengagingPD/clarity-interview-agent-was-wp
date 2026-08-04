@@ -505,14 +505,37 @@ app.use((req, res, next) => {
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
-// Health check — shows both database statuses and document counts
-// Cached for 5 minutes to avoid triggering Firestore reads on every monitoring ping.
-// Pass ?fresh=1 to bypass the cache (e.g. for manual spot-checks).
-app.get('/health', async (req, res) => {
+// Health check. Cached for 5 minutes to avoid triggering Firestore reads on every
+// monitoring ping.
+//
+// CIA-1-018: the endpoint stays public, because a monitor that needs a credential
+// is not a monitor, but it stops being a free billing lever and a free intelligence
+// feed. Three changes: the seven count() aggregations and both Firebase project IDs
+// are operator-only, ?fresh=1 is honored only for an operator so an anonymous caller
+// cannot force uncached aggregations in a loop, and the route is rate limited.
+// Anonymous callers get liveness, which is all a monitor reads.
+function healthViewFor(payload, isOperator) {
+  if (isOperator) return payload;
+  return {
+    status: payload.status,
+    databases: {
+      clarity360: payload.databases.clarity360,
+      findMyPurpose: payload.databases.findMyPurpose,
+    },
+    ts: payload.ts,
+  };
+}
+
+app.get('/health',
+  rateLimit({ windowMs: 60_000, max: 30, bucket: 'health' }),
+  async (req, res) => {
+  // The cache holds the full payload; the view is applied on the way out, so an
+  // operator request can never warm the cache with counts an anonymous caller then reads.
+  const isOperator = verifyAdminToken(req).ok;
   const cacheKey = 'health';
-  if (req.query.fresh !== '1') {
+  if (!(isOperator && req.query.fresh === '1')) {
     const cached = cacheGet(cacheKey);
-    if (cached) return res.json({ ...cached, cached: true });
+    if (cached) return res.json({ ...healthViewFor(cached, isOperator), cached: true });
   }
 
   const counts = {};
@@ -528,7 +551,9 @@ app.get('/health', async (req, res) => {
       const totalSnap = await db.collection('responses').count().get();
       counts['clarity360_total'] = totalSnap.data().count;
     } catch (e) {
-      counts['clarity360_error'] = e.message;
+      // CIA-1-018/CIA-1-022: the Firestore message goes to the log, not the body.
+      log.error('Health count failed for clarity360', { error: e.message });
+      counts['clarity360_error'] = 'unavailable';
     }
   }
 
@@ -545,7 +570,8 @@ app.get('/health', async (req, res) => {
       const fmpParticipantsSnap = await fmpDb.collection('participants').count().get();
       counts['fmp_total_participants'] = fmpParticipantsSnap.data().count;
     } catch (e) {
-      counts['fmp_error'] = e.message;
+      log.error('Health count failed for findMyPurpose', { error: e.message });
+      counts['fmp_error'] = 'unavailable';
     }
   }
 
@@ -561,7 +587,7 @@ app.get('/health', async (req, res) => {
     ts: new Date().toISOString(),
   };
   cacheSet(cacheKey, payload, CACHE_TTL_HEALTH);
-  res.json(payload);
+  res.json(healthViewFor(payload, isOperator));
 });
 
 // Session token
@@ -758,8 +784,10 @@ app.post(
 
       return res.json({ status: 'ok' });
     } catch (e) {
+      // CIA-1-022: the exception message and gRPC code stay in the log; the
+      // caller gets a stable string it can branch on without learning our internals.
       log.error('Firestore write failed', { error: e.message, section, code: e.code });
-      return res.status(500).json({ error: 'Failed to save response', detail: e.message, code: e.code });
+      return res.status(500).json({ error: 'Failed to save response' });
     }
   }
 );
@@ -857,11 +885,10 @@ app.get('/admin/sessions', requireAdminJWT, async (req, res) => {
     return res.json(result);
   } catch (e) {
     console.error('[admin/sessions] Firestore error:', e);
-    return res.status(500).json({
-      error: 'Failed to fetch sessions',
-      detail: e.message || String(e),
-      hint: e.message && e.message.includes('index') ? 'A Firestore composite index may be required for this filter combination. Check the Firebase console.' : undefined,
-    });
+    // CIA-1-022: the missing-index hint told a caller which Firebase console to
+    // look in. The full exception is already on the console.error above, which is
+    // where an operator reads it.
+    return res.status(500).json({ error: 'Failed to fetch sessions' });
   }
 });
 
@@ -1313,15 +1340,17 @@ app.post('/admin/notify-interview-complete', requireAccessKey, async (req, res) 
     const emailData = await emailRes.json();
 
     if (!emailRes.ok) {
+      // CIA-1-022: a third party's response body is no more the caller's business
+      // than our own exception text. The full payload is on the console.error above.
       console.error('[admin/notify-interview-complete] Resend API error:', emailRes.status, JSON.stringify(emailData));
-      return res.status(502).json({ error: 'Email send failed', detail: emailData?.message || emailData });
+      return res.status(502).json({ error: 'Email send failed' });
     }
 
     console.log(`[admin/notify-interview-complete] Notification sent for session ${session_id} (${responseCount} responses) — Resend id: ${emailData.id}`);
     return res.json({ status: 'ok', emailId: emailData.id, responseCount });
   } catch (e) {
     console.error('[admin/notify-interview-complete] Unexpected error:', e.message);
-    return res.status(500).json({ error: 'Unexpected server error', detail: e.message });
+    return res.status(500).json({ error: 'Unexpected server error' });
   }
 });
 
@@ -1455,11 +1484,11 @@ app.post('/admin/generate-administrator-report', requireAdminJWT, async (req, re
 
     if (!response.ok) {
       console.error('[admin/generate-administrator-report] Anthropic API returned HTTP', response.status, ':', JSON.stringify(data));
-      return res.status(502).json({ error: 'Report generation failed', detail: data?.error });
+      return res.status(502).json({ error: 'Report generation failed' });
     }
     if (data.type === 'error') {
       console.error('[admin/generate-administrator-report] Anthropic API error object:', JSON.stringify(data.error));
-      return res.status(502).json({ error: 'Report generation failed', detail: data.error });
+      return res.status(502).json({ error: 'Report generation failed' });
     }
     if (!data.content?.[0]?.text) {
       console.error('[admin/generate-administrator-report] Unexpected response structure (no content[0].text):', JSON.stringify(data).substring(0, 500));
@@ -3733,7 +3762,14 @@ app.post('/district/:districtId/welcome-email', requireAdminJWT, async (req, res
       body: JSON.stringify({ from: 'Clarity 360 <noreply@clarity360hq.com>', to: [data.contactEmail], subject: 'Your Clarity 360 District Dashboard is Ready', html: welcomeHtml }),
     });
     const emailData = await emailRes.json();
-    if (!emailRes.ok) return res.status(502).json({ error: 'Email send failed', detail: emailData });
+    if (!emailRes.ok) {
+      // CIA-1-022: this was the one leak site with no server-side record at all,
+      // so the detail moves to a log rather than simply disappearing.
+      log.error('District welcome email rejected by Resend', {
+        districtId, status: emailRes.status, error: emailData?.message,
+      });
+      return res.status(502).json({ error: 'Email send failed' });
+    }
     log.info('District welcome email sent', { districtId, to: data.contactEmail });
     return res.json({ status: 'ok' });
   } catch (e) {
@@ -4220,10 +4256,7 @@ app.get('/school-climate/sessions', requireAdminJWT, async (req, res) => {
     return res.json(result);
   } catch (e) {
     log.error('Climate sessions fetch failed', { error: e.message });
-    return res.status(500).json({
-      error: 'Failed to fetch school climate sessions',
-      detail: e.message || String(e),
-    });
+    return res.status(500).json({ error: 'Failed to fetch school climate sessions' });
   }
 });
 
@@ -4535,7 +4568,7 @@ app.post('/api/stripe-webhook', async (req, res) => {
     event = stripe.webhooks.constructEvent(req.rawBody, sig, webhookSecret);
   } catch (err) {
     log.warn('Stripe webhook signature verification failed', { error: err.message });
-    return res.status(400).json({ error: `Webhook signature invalid: ${err.message}` });
+    return res.status(400).json({ error: 'Webhook signature invalid' });
   }
 
   if (event.type === 'checkout.session.completed') {
@@ -4678,7 +4711,7 @@ app.post('/api/renewedtude/create-checkout-session', async (req, res) => {
     return res.json({ url: session.url });
   } catch (err) {
     log.error('renewedtude/create-checkout-session error', { error: err.message });
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: 'Failed to create checkout session' });
   }
 });
 
@@ -4830,7 +4863,7 @@ app.get('/api/renewedtude/verify-session', async (req, res) => {
     return res.json({ success: true, email: purchaserEmail });
   } catch (err) {
     log.error('renewedtude/verify-session error', { error: err.message });
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: 'Failed to verify session' });
   }
 });
 
@@ -4864,7 +4897,7 @@ app.get('/api/renewedtude/verify-token', async (req, res) => {
     return res.json({ valid: true });
   } catch (err) {
     log.error('renewedtude/verify-token error', { error: err.message });
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: 'Failed to verify token' });
   }
 });
 
@@ -5145,7 +5178,7 @@ app.get('/workplace/stats', requireAdminJWT, async (req, res) => {
     });
   } catch (err) {
     log.error('Workplace stats fetch failed', { error: err.message });
-    return res.status(500).json({ error: 'Failed to fetch workplace stats', detail: err.message });
+    return res.status(500).json({ error: 'Failed to fetch workplace stats' });
   }
 });
 
@@ -5483,7 +5516,7 @@ app.post('/api/generate-quantitative-report', requireAdminJWT, async (req, res) 
 
   } catch (e) {
     log.error('Quantitative report generation failed', { error: e.message, stack: e.stack });
-    return res.status(500).json({ error: 'Failed to generate quantitative report', detail: e.message });
+    return res.status(500).json({ error: 'Failed to generate quantitative report' });
   }
 });
 
