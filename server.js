@@ -4246,8 +4246,10 @@ app.post('/api/fmp-create-checkout', async (req, res) => {
     log.info('FMP checkout session created', { sessionId: session.id, fmpCode });
     return res.json({ url: session.url });
   } catch (err) {
-    console.error('fmp-create-checkout error', err);
-    return res.status(500).json({ error: err.message, stack: err.stack });
+    // CIA-1-011: this route is unauthenticated, so the response body must carry
+    // no internal detail. The stack goes to the approved logger, not the caller.
+    log.error('fmp-create-checkout failed', { error: err.message, stack: err.stack });
+    return res.status(500).json({ error: 'Could not start checkout' });
   }
 });
 
@@ -4382,8 +4384,10 @@ app.post('/fmp/save-checkin', requireAccessKey, async (req, res) => {
 
     return res.json({ success: true, checkins_completed: newCount });
   } catch (err) {
-    console.error('fmp/save-checkin error', err);
-    return res.status(500).json({ error: err.message, stack: err.stack });
+    // CIA-1-011: same contract as /api/fmp-create-checkout above. The caller gets
+    // a stable message; the stack goes to the approved logger.
+    log.error('fmp/save-checkin failed', { error: err.message, stack: err.stack });
+    return res.status(500).json({ error: 'Could not save the check-in' });
   }
 });
 
