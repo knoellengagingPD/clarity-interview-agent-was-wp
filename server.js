@@ -912,6 +912,36 @@ app.post('/admin/generate-report', requireAdminJWT, async (req, res) => {
   }
 });
 
+// ─── Email rendering safety helpers ──────────────────────────────────────────
+// Every outbound email is assembled by template literal, so each interpolated
+// value is encoded for the context it lands in before it reaches Resend.
+// Values that are already HTML - a markdown-rendered report, a row fragment
+// built just above - are interpolated verbatim and marked with a comment.
+
+/**
+ * HTML-encodes a value for interpolation into element text or a double-quoted
+ * attribute. Backtick and single quote are included so the output is also safe
+ * in the unquoted-attribute case that older mail clients tolerate.
+ */
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"'`]/g, c => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+    '`': '&#96;',
+  }[c]));
+}
+
+/**
+ * Flattens a value to a single line for use in an email subject. A subject is a
+ * mail header, so a CR or LF in it is a header-injection vector.
+ */
+function headerText(value) {
+  return String(value ?? '').replace(/[\r\n]+/g, ' ').trim();
+}
+
 // ─── Markdown → HTML helper (for superintendent report emails) ───────────────
 function markdownToHtml(md) {
   const lines = md.split('\n');
@@ -919,7 +949,10 @@ function markdownToHtml(md) {
   let inList = false;
 
   for (const raw of lines) {
-    const line = raw
+    // Encode before the markdown transforms run, so the only tags in the
+    // output are the ones this function emits. The input is model output
+    // derived from participant free text.
+    const line = escapeHtml(raw)
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
       .replace(/\*(.+?)\*/g, '<em>$1</em>');
 
@@ -1186,15 +1219,15 @@ app.post('/admin/notify-interview-complete', requireAccessKey, async (req, res) 
         <table style="width: 100%; border-collapse: collapse; margin-bottom: 24px;">
           <tr>
             <td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; color: #6b7280; font-size: 13px; width: 140px;">Session ID</td>
-            <td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; color: #111827; font-size: 13px; font-family: monospace;">${session_id}</td>
+            <td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; color: #111827; font-size: 13px; font-family: monospace;">${escapeHtml(session_id)}</td>
           </tr>
           <tr>
             <td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; color: #6b7280; font-size: 13px;">Completed</td>
-            <td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; color: #111827; font-size: 13px;">${timestamp}</td>
+            <td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; color: #111827; font-size: 13px;">${escapeHtml(timestamp)}</td>
           </tr>
           <tr>
             <td style="padding: 10px 0; color: #6b7280; font-size: 13px;">Responses recorded</td>
-            <td style="padding: 10px 0; color: #111827; font-size: 13px; font-weight: 600;">${responseCount}</td>
+            <td style="padding: 10px 0; color: #111827; font-size: 13px; font-weight: 600;">${escapeHtml(responseCount)}</td>
           </tr>
         </table>
         <div style="text-align: center; margin-bottom: 24px;">
@@ -1389,7 +1422,7 @@ app.post('/admin/generate-administrator-report', requireAdminJWT, async (req, re
         const reportHtml = markdownToHtml(reportText);
 
         for (const lead of leads) {
-          const subject = `Your Clarity 360 Leadership Interview Report — ${lead.firstName} ${lead.lastName}`;
+          const subject = headerText(`Your Clarity 360 Leadership Interview Report — ${lead.firstName} ${lead.lastName}`);
           const emailHtml = `<!DOCTYPE html>
 <html>
 <head><meta charset="UTF-8"></head>
@@ -1406,7 +1439,7 @@ app.post('/admin/generate-administrator-report', requireAdminJWT, async (req, re
         <tr>
           <td style="padding:36px 48px 24px;">
             <p style="margin:0 0 20px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;color:#374151;line-height:1.7;">
-              Dear ${lead.firstName},
+              Dear ${escapeHtml(lead.firstName)},
             </p>
             <p style="margin:0 0 28px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;color:#374151;line-height:1.7;">
               Thank you for participating in the Clarity 360 Administrator Interview. Below is the synthesized report based on the responses gathered from your district&apos;s leadership listening tour.
@@ -1785,7 +1818,7 @@ app.post('/send-followup', requireAdminJWT, async (req, res) => {
     : ['Report only'];
 
   const selectionRows = selectionList
-    .map(s => `<tr><td style="padding:8px 0;border-bottom:1px solid #eef2ff;font-family:'Helvetica Neue',Arial,sans-serif;font-size:14px;color:#374151;">✓ &nbsp;${s}</td></tr>`)
+    .map(s => `<tr><td style="padding:8px 0;border-bottom:1px solid #eef2ff;font-family:'Helvetica Neue',Arial,sans-serif;font-size:14px;color:#374151;">✓ &nbsp;${escapeHtml(s)}</td></tr>`)
     .join('');
 
   const html = `<!DOCTYPE html>
@@ -1804,13 +1837,13 @@ app.post('/send-followup', requireAdminJWT, async (req, res) => {
         <tr>
           <td style="padding:40px 48px;">
             <p style="margin:0 0 24px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;color:#374151;line-height:1.7;">
-              A respondent has completed a <strong style="color:#4f46e5;">${interviewType}</strong> and submitted their contact information.
+              A respondent has completed a <strong style="color:#4f46e5;">${escapeHtml(interviewType)}</strong> and submitted their contact information.
             </p>
             <table width="100%" cellpadding="0" cellspacing="0" style="background:#eef2ff;border-radius:12px;padding:24px;margin-bottom:28px;">
               <tr>
                 <td>
                   <p style="margin:0 0 6px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:700;color:#6366f1;letter-spacing:0.1em;text-transform:uppercase;">Contact Email</p>
-                  <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:18px;font-weight:700;color:#1e1b4b;">${email}</p>
+                  <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:18px;font-weight:700;color:#1e1b4b;">${escapeHtml(email)}</p>
                 </td>
               </tr>
             </table>
@@ -1819,7 +1852,7 @@ app.post('/send-followup', requireAdminJWT, async (req, res) => {
             <table width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #e0e7ff;padding-top:20px;">
               <tr>
                 <td style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#94a3b8;">
-                  Session ID: <span style="font-weight:600;color:#64748b;">${sessionId}</span>
+                  Session ID: <span style="font-weight:600;color:#64748b;">${escapeHtml(sessionId)}</span>
                   &nbsp;&nbsp;·&nbsp;&nbsp;
                   ${new Date().toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'short' })}
                 </td>
@@ -1849,7 +1882,7 @@ app.post('/send-followup', requireAdminJWT, async (req, res) => {
         from: 'Clarity 360 <onboarding@resend.dev>',
         to: ['knoell@engagingpd.com'],
         reply_to: email,
-        subject: `Clarity 360 Follow-Up — ${email}`,
+        subject: `Clarity 360 Follow-Up — ${headerText(email)}`,
         html,
       }),
     });
@@ -1886,7 +1919,7 @@ app.post('/send-email', requireAccessKey, async (req, res) => {
     : ['Report only'];
 
   const selectionRows = selectionList
-    .map(s => `<tr><td style="padding:8px 0;border-bottom:1px solid #eef2ff;font-family:'Helvetica Neue',Arial,sans-serif;font-size:14px;color:#374151;">✓ &nbsp;${s}</td></tr>`)
+    .map(s => `<tr><td style="padding:8px 0;border-bottom:1px solid #eef2ff;font-family:'Helvetica Neue',Arial,sans-serif;font-size:14px;color:#374151;">✓ &nbsp;${escapeHtml(s)}</td></tr>`)
     .join('');
 
   const html = `<!DOCTYPE html>
@@ -1905,13 +1938,13 @@ app.post('/send-email', requireAccessKey, async (req, res) => {
         <tr>
           <td style="padding:40px 48px;">
             <p style="margin:0 0 24px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;color:#374151;line-height:1.7;">
-              A respondent has completed a <strong style="color:#4f46e5;">${interviewType}</strong> and submitted their contact information.
+              A respondent has completed a <strong style="color:#4f46e5;">${escapeHtml(interviewType)}</strong> and submitted their contact information.
             </p>
             <table width="100%" cellpadding="0" cellspacing="0" style="background:#eef2ff;border-radius:12px;padding:24px;margin-bottom:28px;">
               <tr>
                 <td>
                   <p style="margin:0 0 6px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:700;color:#6366f1;letter-spacing:0.1em;text-transform:uppercase;">Contact Email</p>
-                  <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:18px;font-weight:700;color:#1e1b4b;">${email}</p>
+                  <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:18px;font-weight:700;color:#1e1b4b;">${escapeHtml(email)}</p>
                 </td>
               </tr>
             </table>
@@ -1920,7 +1953,7 @@ app.post('/send-email', requireAccessKey, async (req, res) => {
             <table width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #e0e7ff;padding-top:20px;">
               <tr>
                 <td style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#94a3b8;">
-                  Session ID: <span style="font-weight:600;color:#64748b;">${sessionId}</span>
+                  Session ID: <span style="font-weight:600;color:#64748b;">${escapeHtml(sessionId)}</span>
                   &nbsp;&nbsp;·&nbsp;&nbsp;
                   ${new Date().toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'short' })}
                 </td>
@@ -1950,7 +1983,7 @@ app.post('/send-email', requireAccessKey, async (req, res) => {
         from: 'Clarity 360 <onboarding@resend.dev>',
         to: ['knoell@engagingpd.com'],
         reply_to: email,
-        subject: `Clarity 360 Follow-Up — ${email}`,
+        subject: `Clarity 360 Follow-Up — ${headerText(email)}`,
         html,
       }),
     });
@@ -2025,7 +2058,7 @@ app.post('/fmp/register-participant', requireAccessKey, async (req, res) => {
               <tr>
                 <td style="text-align:center;">
                   <p style="margin:0 0 8px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:700;color:rgba(255,255,255,0.8);letter-spacing:0.14em;text-transform:uppercase;">Your Return Code</p>
-                  <p style="margin:0 0 10px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:40px;font-weight:800;color:#ffffff;letter-spacing:0.08em;">${return_code}</p>
+                  <p style="margin:0 0 10px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:40px;font-weight:800;color:#ffffff;letter-spacing:0.08em;">${escapeHtml(return_code)}</p>
                   <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;color:rgba(255,255,255,0.85);">Save this code to continue your journey in your next session.</p>
                 </td>
               </tr>
@@ -2059,7 +2092,7 @@ app.post('/fmp/register-participant', requireAccessKey, async (req, res) => {
       body: JSON.stringify({
         from: process.env.FMP_FROM_EMAIL || 'Find My Purpose <onboarding@resend.dev>',
         to: [email],
-        subject: `Your Find My Purpose Return Code: ${return_code}`,
+        subject: `Your Find My Purpose Return Code: ${headerText(return_code)}`,
         html,
       }),
     });
@@ -2153,7 +2186,10 @@ Write in second person ("you", "your"). Be warm, specific, and meaningful. Refer
     const reportHtml = reportText
       .split('\n\n')
       .map(para => {
-        const p = para
+        // Encode before the markdown transforms, so the only tags emitted are
+        // the two below. The input is model output derived from participant
+        // free text.
+        const p = escapeHtml(para)
           .replace(/\*\*(.+?)\*\*/g, '<strong style="color:#92400e;">$1</strong>')
           .replace(/\n/g, '<br>');
         return `<p style="margin:0 0 18px;font-family:\'Helvetica Neue\',Arial,sans-serif;font-size:15px;color:#1c1917;line-height:1.85;">${p}</p>`;
@@ -2178,7 +2214,7 @@ Write in second person ("you", "your"). Be warm, specific, and meaningful. Refer
           <td style="padding:44px 52px;">
             ${isParticipant
               ? `<p style="margin:0 0 28px;font-family:\'Helvetica Neue\',Arial,sans-serif;font-size:15px;color:#57534e;line-height:1.8;">Thank you for taking time to explore what matters most to you. What follows is a personal reflection drawn from everything you shared today — your hopes, your values, and the things that truly light you up.</p>`
-              : `<p style="margin:0 0 28px;font-family:\'Helvetica Neue\',Arial,sans-serif;font-size:15px;color:#57534e;line-height:1.8;">A Find My Purpose interview has been completed. Below is the personal reflection report sent to the participant at <strong>${email}</strong>.</p>`
+              : `<p style="margin:0 0 28px;font-family:\'Helvetica Neue\',Arial,sans-serif;font-size:15px;color:#57534e;line-height:1.8;">A Find My Purpose interview has been completed. Below is the personal reflection report sent to the participant at <strong>${escapeHtml(email)}</strong>.</p>`
             }
             <div style="background:linear-gradient(135deg,#fff7ed,#fce7f3);border-radius:16px;padding:32px 36px;border:1px solid rgba(245,158,11,0.15);">
               ${reportHtml}
@@ -2186,7 +2222,7 @@ Write in second person ("you", "your"). Be warm, specific, and meaningful. Refer
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;padding-top:20px;border-top:1px solid #fde68a;">
               <tr>
                 <td style="font-family:\'Helvetica Neue\',Arial,sans-serif;font-size:12px;color:#a8a29e;">
-                  Session: <span style="font-weight:600;color:#78716c;">${sessionId || 'unknown'}</span> &nbsp;&middot;&nbsp; ${dateStr}
+                  Session: <span style="font-weight:600;color:#78716c;">${escapeHtml(sessionId || 'unknown')}</span> &nbsp;&middot;&nbsp; ${dateStr}
                 </td>
               </tr>
             </table>
@@ -2224,7 +2260,7 @@ Write in second person ("you", "your"). Be warm, specific, and meaningful. Refer
         from: process.env.FMP_FROM_EMAIL || 'Find My Purpose <onboarding@resend.dev>',
         to: ['knoell@engagingonline.net'],
         reply_to: email,
-        subject: `FMP Personal Report — ${email}`,
+        subject: `FMP Personal Report — ${headerText(email)}`,
         html: makeHtml(false),
       }),
     });
@@ -2394,7 +2430,7 @@ app.post('/fmp/session2-email', requireAccessKey, async (req, res) => {
     { pillar: '✨ Faith & Transcendence', goal: goals.faith },
   ]
     .filter(g => g.goal)
-    .map(g => `<tr><td style="padding:20px 24px;border-bottom:1px solid #fde68a;"><p style="margin:0 0 6px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:700;color:#d97706;letter-spacing:0.1em;text-transform:uppercase;">${g.pillar}</p><p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;color:#1c1917;line-height:1.7;">${g.goal}</p></td></tr>`)
+    .map(g => `<tr><td style="padding:20px 24px;border-bottom:1px solid #fde68a;"><p style="margin:0 0 6px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:700;color:#d97706;letter-spacing:0.1em;text-transform:uppercase;">${escapeHtml(g.pillar)}</p><p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;color:#1c1917;line-height:1.7;">${escapeHtml(g.goal)}</p></td></tr>`)
     .join('');
 
   const goalCount = [goals.family, goals.friends, goals.work, goals.faith].filter(Boolean).length;
@@ -2425,7 +2461,7 @@ app.post('/fmp/session2-email', requireAccessKey, async (req, res) => {
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;padding-top:20px;border-top:1px solid #fde68a;">
               <tr>
                 <td style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#a8a29e;">
-                  Return code: <span style="font-weight:700;color:#d97706;">${returnCode || '—'}</span> &nbsp;&middot;&nbsp; ${dateStr}
+                  Return code: <span style="font-weight:700;color:#d97706;">${escapeHtml(returnCode || '—')}</span> &nbsp;&middot;&nbsp; ${dateStr}
                 </td>
               </tr>
             </table>
@@ -2466,7 +2502,7 @@ app.post('/fmp/session2-email', requireAccessKey, async (req, res) => {
         from: process.env.FMP_FROM_EMAIL || 'Find My Purpose <onboarding@resend.dev>',
         to: ['knoell@engagingonline.net'],
         reply_to: email,
-        subject: `FMP Session 2 Goals — ${email}`,
+        subject: `FMP Session 2 Goals — ${headerText(email)}`,
         html,
       }),
     }).catch(e => log.warn('FMP session2 admin copy failed', { error: e.message }));
@@ -2646,15 +2682,15 @@ app.post('/fmp/checkin/:code', requireAccessKey, async (req, res) => {
         const pillarLabel = pillarMeta ? pillarMeta.label : gp.goal_id;
         const ratingMeta = RATING_LABELS_EMAIL[gp.rating] || { label: `Rating ${gp.rating}`, color: '#57534e' };
         const goalText = gp.updated_goal || (participant.goals || {})[gp.goal_id] || '';
-        const winsHtml = gp.wins ? `<p style="margin:6px 0 0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;color:#57534e;line-height:1.6;"><strong style="color:#16a34a;">Wins:</strong> ${gp.wins}</p>` : '';
-        const obstaclesHtml = gp.obstacles ? `<p style="margin:4px 0 0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;color:#57534e;line-height:1.6;"><strong style="color:#d97706;">Challenges:</strong> ${gp.obstacles}</p>` : '';
+        const winsHtml = gp.wins ? `<p style="margin:6px 0 0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;color:#57534e;line-height:1.6;"><strong style="color:#16a34a;">Wins:</strong> ${escapeHtml(gp.wins)}</p>` : '';
+        const obstaclesHtml = gp.obstacles ? `<p style="margin:4px 0 0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;color:#57534e;line-height:1.6;"><strong style="color:#d97706;">Challenges:</strong> ${escapeHtml(gp.obstacles)}</p>` : '';
         const updatedHtml = gp.updated_goal ? `<p style="margin:4px 0 0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#7c3aed;line-height:1.6;"><em>Goal updated this session</em></p>` : '';
         return `<tr><td style="padding:18px 24px;border-bottom:1px solid #fde68a;">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap;">
-            <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:700;color:#d97706;letter-spacing:0.1em;text-transform:uppercase;">${pillarLabel}</p>
-            <span style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:800;color:${ratingMeta.color};background:rgba(0,0,0,0.05);padding:2px 10px;border-radius:20px;">${gp.rating}/4 · ${ratingMeta.label}</span>
+            <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:700;color:#d97706;letter-spacing:0.1em;text-transform:uppercase;">${escapeHtml(pillarLabel)}</p>
+            <span style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:800;color:${escapeHtml(ratingMeta.color)};background:rgba(0,0,0,0.05);padding:2px 10px;border-radius:20px;">${escapeHtml(gp.rating)}/4 · ${escapeHtml(ratingMeta.label)}</span>
           </div>
-          <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:14px;color:#1c1917;line-height:1.7;font-weight:600;">${goalText}</p>
+          <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:14px;color:#1c1917;line-height:1.7;font-weight:600;">${escapeHtml(goalText)}</p>
           ${winsHtml}${obstaclesHtml}${updatedHtml}
         </td></tr>`;
       }).join('');
@@ -2668,14 +2704,14 @@ app.post('/fmp/checkin/:code', requireAccessKey, async (req, res) => {
       <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 4px 32px rgba(245,158,11,0.12);">
         <tr>
           <td style="background:linear-gradient(135deg,#f59e0b,#d97706);padding:40px 48px;">
-            <p style="margin:0 0 6px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:700;color:rgba(255,255,255,0.75);letter-spacing:0.14em;text-transform:uppercase;">Find My Purpose &middot; Check-In ${ordinalLabel}</p>
+            <p style="margin:0 0 6px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:700;color:rgba(255,255,255,0.75);letter-spacing:0.14em;text-transform:uppercase;">Find My Purpose &middot; Check-In ${escapeHtml(ordinalLabel)}</p>
             <h1 style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:26px;font-weight:800;color:#ffffff;">Check-In Complete!</h1>
           </td>
         </tr>
         <tr>
           <td style="padding:40px 48px;">
             <p style="margin:0 0 28px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;color:#57534e;line-height:1.8;">
-              You've completed your ${ordinalLabel} check-in — that's <strong style="color:#92400e;">${newCount} of 4</strong> done. Here's where you stand on each of your goals.
+              You've completed your ${escapeHtml(ordinalLabel)} check-in — that's <strong style="color:#92400e;">${escapeHtml(newCount)} of 4</strong> done. Here's where you stand on each of your goals.
             </p>
             <table width="100%" cellpadding="0" cellspacing="0" style="background:linear-gradient(135deg,#fff7ed,#fffbeb);border-radius:16px;overflow:hidden;border:1px solid #fde68a;margin-bottom:28px;">
               ${goalRows}
@@ -2686,7 +2722,7 @@ app.post('/fmp/checkin/:code', requireAccessKey, async (req, res) => {
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;padding-top:20px;border-top:1px solid #fde68a;">
               <tr>
                 <td style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#a8a29e;">
-                  Return code: <span style="font-weight:700;color:#d97706;">${normalizedCode}</span> &nbsp;&middot;&nbsp; ${dateStr}
+                  Return code: <span style="font-weight:700;color:#d97706;">${escapeHtml(normalizedCode)}</span> &nbsp;&middot;&nbsp; ${dateStr}
                 </td>
               </tr>
             </table>
@@ -2709,7 +2745,7 @@ app.post('/fmp/checkin/:code', requireAccessKey, async (req, res) => {
         body: JSON.stringify({
           from: process.env.FMP_FROM_EMAIL || 'Find My Purpose <onboarding@resend.dev>',
           to: [participantEmail],
-          subject: `Check-In ${ordinalLabel} Complete — Your Progress`,
+          subject: `Check-In ${headerText(ordinalLabel)} Complete — Your Progress`,
           html: checkinEmailHtml,
         }),
       }).catch(e => log.warn('FMP check-in participant email failed', { error: e.message }));
@@ -2721,7 +2757,7 @@ app.post('/fmp/checkin/:code', requireAccessKey, async (req, res) => {
           from: process.env.FMP_FROM_EMAIL || 'Find My Purpose <onboarding@resend.dev>',
           to: ['knoell@engagingonline.net'],
           reply_to: participantEmail,
-          subject: `FMP Check-In ${ordinalLabel} — ${participantEmail}`,
+          subject: `FMP Check-In ${headerText(ordinalLabel)} — ${headerText(participantEmail)}`,
           html: checkinEmailHtml,
         }),
       }).catch(e => log.warn('FMP check-in admin copy failed', { error: e.message }));
@@ -2821,8 +2857,8 @@ app.post('/fmp/schedule-checkins/:code', requireAccessKey, async (req, res) => {
       .map(p => `
         <tr>
           <td style="padding:14px 24px;border-bottom:1px solid #fde68a;">
-            <p style="margin:0 0 4px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:700;color:${p.color};letter-spacing:0.1em;text-transform:uppercase;">${p.label}</p>
-            <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:14px;color:#1c1917;line-height:1.6;">${rawGoals[p.id]}</p>
+            <p style="margin:0 0 4px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:700;color:${escapeHtml(p.color)};letter-spacing:0.1em;text-transform:uppercase;">${escapeHtml(p.label)}</p>
+            <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:14px;color:#1c1917;line-height:1.6;">${escapeHtml(rawGoals[p.id])}</p>
           </td>
         </tr>`)
       .join('');
@@ -2833,7 +2869,7 @@ app.post('/fmp/schedule-checkins/:code', requireAccessKey, async (req, res) => {
       return `
         <tr>
           <td style="padding:10px 0;border-bottom:1px solid #fde68a;">
-            <span style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;font-weight:700;color:#d97706;">Check-In ${d.checkin_number}</span>
+            <span style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;font-weight:700;color:#d97706;">Check-In ${escapeHtml(d.checkin_number)}</span>
             <span style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;color:#57534e;margin-left:12px;">${formatted}</span>
           </td>
         </tr>`;
@@ -2876,7 +2912,7 @@ app.post('/fmp/schedule-checkins/:code', requireAccessKey, async (req, res) => {
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
               <tr>
                 <td align="center">
-                  <a href="${checkinLink}" style="display:inline-block;background:linear-gradient(135deg,#f59e0b,#d97706);color:#ffffff;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;padding:14px 36px;border-radius:12px;">Start a Check-In</a>
+                  <a href="${escapeHtml(checkinLink)}" style="display:inline-block;background:linear-gradient(135deg,#f59e0b,#d97706);color:#ffffff;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;padding:14px 36px;border-radius:12px;">Start a Check-In</a>
                 </td>
               </tr>
             </table>
@@ -2884,7 +2920,7 @@ app.post('/fmp/schedule-checkins/:code', requireAccessKey, async (req, res) => {
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;padding-top:20px;border-top:1px solid #fde68a;">
               <tr>
                 <td style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#a8a29e;">
-                  Return code: <span style="font-weight:700;color:#d97706;">${normalizedCode}</span>
+                  Return code: <span style="font-weight:700;color:#d97706;">${escapeHtml(normalizedCode)}</span>
                 </td>
               </tr>
             </table>
@@ -2991,8 +3027,8 @@ app.post('/fmp/send-checkin-reminder', async (req, res) => {
           .map(p => `
             <tr>
               <td style="padding:14px 24px;border-bottom:1px solid #fde68a;">
-                <p style="margin:0 0 4px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:700;color:#d97706;letter-spacing:0.1em;text-transform:uppercase;">${p.label}</p>
-                <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:14px;color:#1c1917;line-height:1.6;">${rawGoals[p.id]}</p>
+                <p style="margin:0 0 4px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:700;color:#d97706;letter-spacing:0.1em;text-transform:uppercase;">${escapeHtml(p.label)}</p>
+                <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:14px;color:#1c1917;line-height:1.6;">${escapeHtml(rawGoals[p.id])}</p>
               </td>
             </tr>`)
           .join('');
@@ -3011,7 +3047,7 @@ app.post('/fmp/send-checkin-reminder', async (req, res) => {
         <tr>
           <td style="background:linear-gradient(135deg,#f59e0b,#d97706);padding:40px 48px;">
             <p style="margin:0 0 6px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:700;color:rgba(255,255,255,0.75);letter-spacing:0.14em;text-transform:uppercase;">Find My Purpose &middot; Clarity 360</p>
-            <h1 style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:26px;font-weight:800;color:#ffffff;">Time for Your ${ordinal} Check-In!</h1>
+            <h1 style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:26px;font-weight:800;color:#ffffff;">Time for Your ${escapeHtml(ordinal)} Check-In!</h1>
           </td>
         </tr>
         <tr>
@@ -3032,20 +3068,20 @@ app.post('/fmp/send-checkin-reminder', async (req, res) => {
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:32px;">
               <tr>
                 <td align="center">
-                  <a href="${checkinLink}" style="display:inline-block;background:linear-gradient(135deg,#f59e0b,#d97706);color:#ffffff;font-family:'Helvetica Neue',Arial,sans-serif;font-size:16px;font-weight:700;text-decoration:none;padding:16px 40px;border-radius:12px;">Complete My ${ordinal} Check-In</a>
+                  <a href="${escapeHtml(checkinLink)}" style="display:inline-block;background:linear-gradient(135deg,#f59e0b,#d97706);color:#ffffff;font-family:'Helvetica Neue',Arial,sans-serif;font-size:16px;font-weight:700;text-decoration:none;padding:16px 40px;border-radius:12px;">Complete My ${escapeHtml(ordinal)} Check-In</a>
                 </td>
               </tr>
             </table>
 
             <p style="margin:0 0 8px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;color:#a8a29e;">
               Or copy and paste this link into your browser:<br>
-              <span style="color:#d97706;">${checkinLink}</span>
+              <span style="color:#d97706;">${escapeHtml(checkinLink)}</span>
             </p>
 
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;padding-top:20px;border-top:1px solid #fde68a;">
               <tr>
                 <td style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#a8a29e;">
-                  Return code: <span style="font-weight:700;color:#d97706;">${returnCode}</span> &nbsp;&middot;&nbsp; Check-In ${checkinNum} of 4
+                  Return code: <span style="font-weight:700;color:#d97706;">${escapeHtml(returnCode)}</span> &nbsp;&middot;&nbsp; Check-In ${escapeHtml(checkinNum)} of 4
                 </td>
               </tr>
             </table>
@@ -3068,7 +3104,7 @@ app.post('/fmp/send-checkin-reminder', async (req, res) => {
             body: JSON.stringify({
               from: process.env.FMP_FROM_EMAIL || 'Find My Purpose <onboarding@resend.dev>',
               to: [email],
-              subject: `Your Find My Purpose ${ordinal} Check-In is Ready`,
+              subject: `Your Find My Purpose ${headerText(ordinal)} Check-In is Ready`,
               html,
             }),
           });
@@ -3297,9 +3333,9 @@ app.post('/district/request-access', async (req, res) => {
                 <h1 style="margin:0;color:#fff;font-size:22px;font-weight:800;">Your Access Code</h1>
               </div>
               <div style="background:#fff;border-radius:0 0 12px 12px;padding:32px;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
-                <p style="margin:0 0 20px;font-size:15px;color:#374151;line-height:1.7;">Hello,<br>Here is your one-time access code for the <strong>${data.districtName || districtId}</strong> Clarity 360 district dashboard:</p>
+                <p style="margin:0 0 20px;font-size:15px;color:#374151;line-height:1.7;">Hello,<br>Here is your one-time access code for the <strong>${escapeHtml(data.districtName || districtId)}</strong> Clarity 360 district dashboard:</p>
                 <div style="text-align:center;margin:24px 0;">
-                  <span style="display:inline-block;background:#eef2ff;border:2px solid #c7d2fe;border-radius:12px;padding:18px 36px;font-size:36px;font-weight:900;letter-spacing:0.18em;color:#4338ca;font-family:monospace;">${code}</span>
+                  <span style="display:inline-block;background:#eef2ff;border:2px solid #c7d2fe;border-radius:12px;padding:18px 36px;font-size:36px;font-weight:900;letter-spacing:0.18em;color:#4338ca;font-family:monospace;">${escapeHtml(code)}</span>
                 </div>
                 <p style="margin:16px 0 0;font-size:13px;color:#6b7280;text-align:center;">This code expires in <strong>15 minutes</strong>. Do not share it with anyone.</p>
               </div>
@@ -3564,8 +3600,8 @@ app.patch('/district/:districtId/deployment/:deploymentId/close', requireAdminJW
             <h1 style="margin:0;color:#fff;font-size:22px;font-weight:800;">Your Deployment Has Closed</h1>
           </div>
           <div style="background:#fff;border-radius:0 0 12px 12px;padding:32px;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
-            <p style="font-size:15px;color:#374151;line-height:1.7;">Data collection for <strong>${closed?.schoolName || 'your school'}</strong> is now complete. Our team is reviewing the responses.</p>
-            <p style="font-size:15px;color:#374151;line-height:1.7;">Your reports will be available in the <a href="https://clarity360hq.com/district/${districtId}" style="color:#4f46e5;">district dashboard</a> within <strong>1–2 weeks</strong>.</p>
+            <p style="font-size:15px;color:#374151;line-height:1.7;">Data collection for <strong>${escapeHtml(closed?.schoolName || 'your school')}</strong> is now complete. Our team is reviewing the responses.</p>
+            <p style="font-size:15px;color:#374151;line-height:1.7;">Your reports will be available in the <a href="https://clarity360hq.com/district/${escapeHtml(districtId)}" style="color:#4f46e5;">district dashboard</a> within <strong>1–2 weeks</strong>.</p>
             <p style="font-size:13px;color:#6b7280;">Questions? Contact <a href="mailto:knoell@engagingpd.com" style="color:#4f46e5;">Dr. Christopher M. Knoell</a></p>
           </div>
         </div>`;
@@ -3602,10 +3638,10 @@ app.post('/district/:districtId/welcome-email', requireAdminJWT, async (req, res
         </div>
         <div style="background:#fff;border-radius:0 0 12px 12px;padding:32px;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
           <div style="text-align:center;padding:20px 0 10px;"><img src="https://clarity360hq.com/clarity360-icon.png" alt="Clarity 360" width="80" height="80" style="border-radius:12px;"/></div>
-          <p style="font-size:15px;color:#374151;line-height:1.7;">Hello,<br>Your Clarity 360 district dashboard for <strong>${data.districtName}</strong> is now active.</p>
+          <p style="font-size:15px;color:#374151;line-height:1.7;">Hello,<br>Your Clarity 360 district dashboard for <strong>${escapeHtml(data.districtName)}</strong> is now active.</p>
           <p style="font-size:15px;color:#374151;line-height:1.7;">You can view deployment status, participation rates, and reports at any time:</p>
           <div style="text-align:center;margin:24px 0;">
-            <a href="${dashUrl}" style="display:inline-block;background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;text-decoration:none;padding:14px 32px;border-radius:50px;font-size:15px;font-weight:800;box-shadow:0 6px 18px rgba(99,102,241,0.35);">
+            <a href="${escapeHtml(dashUrl)}" style="display:inline-block;background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;text-decoration:none;padding:14px 32px;border-radius:50px;font-size:15px;font-weight:800;box-shadow:0 6px 18px rgba(99,102,241,0.35);">
               Access Your Dashboard →
             </a>
           </div>
@@ -3810,7 +3846,7 @@ app.post('/school-climate/send-deployment-email', requireAdminJWT, async (req, r
   const questions = CLIMATE_QUESTIONS[role];
   const questionRows = questions.map(q =>
     `<tr><td style="padding:7px 0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:14px;color:#374151;line-height:1.65;border-bottom:1px solid #f1f5f9;">` +
-    `<span style="font-weight:700;color:#6366f1;margin-right:8px;">${q.n}.</span>${q.text}` +
+    `<span style="font-weight:700;color:#6366f1;margin-right:8px;">${escapeHtml(q.n)}.</span>${escapeHtml(q.text)}` +
     (q.open ? `<span style="font-style:italic;color:#94a3b8;font-size:12px;margin-left:6px;">(Open — share your thoughts)</span>` : '') +
     `</td></tr>`
   ).join('');
@@ -3826,7 +3862,7 @@ app.post('/school-climate/send-deployment-email', requireAdminJWT, async (req, r
         <tr>
           <td style="background:linear-gradient(135deg,#6366f1,#4f46e5);padding:36px 48px;">
             <p style="margin:0 0 4px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:700;color:rgba(255,255,255,0.7);letter-spacing:0.12em;text-transform:uppercase;">Clarity 360</p>
-            <h1 style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:26px;font-weight:800;color:#ffffff;">Your ${roleLabel} School Climate Survey</h1>
+            <h1 style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:26px;font-weight:800;color:#ffffff;">Your ${escapeHtml(roleLabel)} School Climate Survey</h1>
           </td>
         </tr>
         <!-- Body -->
@@ -3834,7 +3870,7 @@ app.post('/school-climate/send-deployment-email', requireAdminJWT, async (req, r
           <td style="padding:40px 48px;">
             <div style="text-align:center;padding:20px 0 10px;"><img src="https://clarity360hq.com/clarity360-icon.png" alt="Clarity 360" width="80" height="80" style="border-radius:12px;"/></div>
             <p style="margin:0 0 20px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;color:#374151;line-height:1.7;">
-              You have been invited to participate in the <strong style="color:#4f46e5;">Clarity 360 School Climate Survey</strong> for <strong>${schoolDisplay}</strong>. This confidential, voice-guided survey takes approximately 10–15 minutes to complete.
+              You have been invited to participate in the <strong style="color:#4f46e5;">Clarity 360 School Climate Survey</strong> for <strong>${escapeHtml(schoolDisplay)}</strong>. This confidential, voice-guided survey takes approximately 10–15 minutes to complete.
             </p>
 
             <!-- Survey link button -->
@@ -3842,10 +3878,10 @@ app.post('/school-climate/send-deployment-email', requireAdminJWT, async (req, r
               <tr>
                 <td align="center" style="background:#eef2ff;border-radius:12px;padding:28px;">
                   <p style="margin:0 0 16px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;color:#6366f1;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;">Your Survey Link</p>
-                  <a href="${surveyUrl}" style="display:inline-block;background:linear-gradient(135deg,#6366f1,#4f46e5);color:#ffffff;text-decoration:none;padding:14px 36px;border-radius:50px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;font-weight:800;box-shadow:0 6px 18px rgba(99,102,241,0.35);">
+                  <a href="${escapeHtml(surveyUrl)}" style="display:inline-block;background:linear-gradient(135deg,#6366f1,#4f46e5);color:#ffffff;text-decoration:none;padding:14px 36px;border-radius:50px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;font-weight:800;box-shadow:0 6px 18px rgba(99,102,241,0.35);">
                     Begin My Survey →
                   </a>
-                  <p style="margin:14px 0 0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#94a3b8;">Or copy this link: <span style="color:#4f46e5;">${surveyUrl}</span></p>
+                  <p style="margin:14px 0 0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#94a3b8;">Or copy this link: <span style="color:#4f46e5;">${escapeHtml(surveyUrl)}</span></p>
                 </td>
               </tr>
             </table>
@@ -3905,7 +3941,7 @@ app.post('/school-climate/send-deployment-email', requireAdminJWT, async (req, r
       body: JSON.stringify({
         from: 'Clarity 360 <noreply@clarity360hq.com>',
         to: [recipient_email.trim()],
-        subject: `Your ${roleLabel} School Climate Survey — ${schoolDisplay}`,
+        subject: `Your ${headerText(roleLabel)} School Climate Survey — ${headerText(schoolDisplay)}`,
         html,
       }),
     });
@@ -4153,12 +4189,12 @@ app.post('/school-climate/flag-session', async (req, res) => {
           from:    'Clarity 360 <noreply@clarity360hq.com>',
           to:      ['knoell@engagingpd.com'],
           subject: 'Clarity 360 — Crisis Language Detected',
-          html: `<p>A session at <strong>${school_name || 'unknown school'}</strong> was flagged for potential crisis language during a School Climate Survey.</p>
+          html: `<p>A session at <strong>${escapeHtml(school_name || 'unknown school')}</strong> was flagged for potential crisis language during a School Climate Survey.</p>
 <p>The participant was immediately provided the 988 Suicide and Crisis Lifeline resource during the interview.</p>
 <p>No identifying information or transcript content is available.</p>
 <p>Please notify the district contact so they can activate their crisis protocols.</p>
 <hr>
-<p style="color:#888;font-size:12px;">Session token: ${token} &nbsp;|&nbsp; School ID: ${school_id || 'unknown'}</p>`,
+<p style="color:#888;font-size:12px;">Session token: ${escapeHtml(token)} &nbsp;|&nbsp; School ID: ${escapeHtml(school_id || 'unknown')}</p>`,
         }),
       });
       const emailData = await emailRes.json();
@@ -4590,7 +4626,7 @@ app.get('/api/renewedtude/verify-session', async (req, res) => {
             <table cellpadding="0" cellspacing="0" style="margin:0 auto 28px;">
               <tr>
                 <td style="background:#C0392B;border-radius:8px;text-align:center;">
-                  <a href="${accessLink}" style="display:inline-block;padding:16px 40px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:16px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#ffffff;text-decoration:none;">
+                  <a href="${escapeHtml(accessLink)}" style="display:inline-block;padding:16px 40px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:16px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#ffffff;text-decoration:none;">
                     Access Your Course
                   </a>
                 </td>
@@ -4598,7 +4634,7 @@ app.get('/api/renewedtude/verify-session', async (req, res) => {
             </table>
             <p style="margin:0 0 8px;font-size:13px;color:#666;text-align:center;">Or copy this link into your browser:</p>
             <p style="margin:0 0 20px;font-size:13px;color:#888;text-align:center;word-break:break-all;">
-              <a href="${accessLink}" style="color:#e8a09a;text-decoration:none;">${accessLink}</a>
+              <a href="${escapeHtml(accessLink)}" style="color:#e8a09a;text-decoration:none;">${escapeHtml(accessLink)}</a>
             </p>
             <p style="margin:0 0 28px;font-size:14px;color:#d4d4d4;text-align:center;">
               Course password: <strong style="color:#ffffff;letter-spacing:0.05em;">GetRenewed2026</strong>
