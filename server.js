@@ -3225,6 +3225,13 @@ function requireAdminOrAccessKey(req, res, next) {
   return res.status(401).json({ error: 'Unauthorized' });
 }
 
+// CIA-1-001: wrong guesses allowed per issued district access code before the
+// code is burned. Held on the district_portals document as accessCodeAttempts, not
+// in process memory, because on Vercel each function instance keeps its own
+// memory and an in-memory counter resets on every cold start. This is the
+// load-bearing bound on the 900,000-value keyspace.
+const MAX_OTP_ATTEMPTS = 5;
+
 // ─── POST /district/request-access ────────────────────────────────────────────
 // Public. Generates a 6-digit OTP, stores it in district_portals, emails it.
 // Always returns { success: true } — never reveals whether districtId/email exists.
@@ -3242,7 +3249,9 @@ app.post('/district/request-access', async (req, res) => {
       if (data.contactEmail && data.contactEmail.toLowerCase() === email.toLowerCase().trim()) {
         const code   = String(Math.floor(100000 + Math.random() * 900000));
         const expiry = new Date(Date.now() + 15 * 60 * 1000);
-        await ref.update({ accessCode: code, accessCodeExpiry: expiry });
+        // CIA-1-001: reset the attempt counter with the new code, so a fresh
+        // request is not born already locked out by a previous code's failures.
+        await ref.update({ accessCode: code, accessCodeExpiry: expiry, accessCodeAttempts: 0 });
         if (process.env.RESEND_API_KEY) {
           const codeHtml = `
             <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:520px;margin:0 auto;background:#f9fafb;padding:32px 20px;">
@@ -3292,19 +3301,57 @@ app.post('/district/verify-access', async (req, res) => {
   const FAIL = { success: false, error: 'Invalid or expired code' };
   try {
     const ref  = db.collection('district_portals').doc(String(districtId).trim());
-    const snap = await ref.get();
-    if (!snap.exists) return res.status(401).json(FAIL);
-    const data = snap.data();
-    const expiry = data.accessCodeExpiry?.toDate?.() || data.accessCodeExpiry;
-    if (
-      !data.accessCode ||
-      String(data.accessCode) !== String(code).trim() ||
-      (data.contactEmail || '').toLowerCase() !== email.toLowerCase().trim() ||
-      !expiry || new Date() > expiry
-    ) {
+
+    // CIA-1-001: the code is a 6-digit bearer credential that mints a 24-hour
+    // district JWT, so guessing must be bounded. Read, compare, and record the
+    // attempt inside one transaction: a plain read-then-update lets concurrent
+    // guesses all observe the same pre-increment count and race past the cap.
+    //
+    // A wrong guess now consumes an attempt, and the fifth one burns the code.
+    // That is deliberate, and it is a trade: an attacker who knows the district
+    // and contact email can burn a code the superintendent is currently typing.
+    // Re-requesting is one click, and the alternative is unbounded guessing over
+    // a 900,000-value keyspace. The mail-bombing half of that exposure is
+    // tracked separately as CIA-1-019.
+    const verdict = await db.runTransaction(async (txn) => {
+      const snap = await txn.get(ref);
+      if (!snap.exists) return { ok: false, reason: 'no_district' };
+      const data = snap.data();
+      const attempts = Number(data.accessCodeAttempts) || 0;
+
+      if (attempts >= MAX_OTP_ATTEMPTS) {
+        // Burn the code rather than leaving a locked-out but still-live value.
+        txn.update(ref, { accessCode: null, accessCodeExpiry: null });
+        return { ok: false, reason: 'attempts_exhausted', attempts };
+      }
+
+      const expiry = data.accessCodeExpiry?.toDate?.() || data.accessCodeExpiry;
+      if (
+        !data.accessCode ||
+        String(data.accessCode) !== String(code).trim() ||
+        (data.contactEmail || '').toLowerCase() !== email.toLowerCase().trim() ||
+        !expiry || new Date() > expiry
+      ) {
+        txn.update(ref, { accessCodeAttempts: attempts + 1 });
+        return { ok: false, reason: 'bad_code', attempts: attempts + 1 };
+      }
+
+      txn.update(ref, { accessCode: null, accessCodeExpiry: null, accessCodeAttempts: 0 });
+      return { ok: true };
+    });
+
+    if (!verdict.ok) {
+      // One response shape for every failure, so this route stays the
+      // non-oracle it already was. The distinction lives in the log.
+      log.warn('District verify-access denied', {
+        districtId: String(districtId).trim(),
+        reason: verdict.reason,
+        attempts: verdict.attempts,
+        ip: req.ip,
+      });
       return res.status(401).json(FAIL);
     }
-    await ref.update({ accessCode: null, accessCodeExpiry: null });
+
     const secret = process.env.AUTH_HMAC_SECRET;
     if (!secret) { log.error('AUTH_HMAC_SECRET not set'); return res.status(500).json({ error: 'Server misconfiguration' }); }
     const token = jwtSign({ typ: 'district', districtId: districtId.trim(), email: email.trim(), exp: Math.floor(Date.now() / 1000) + 86400 }, secret);
