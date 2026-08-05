@@ -411,6 +411,94 @@ function validateLogPayload(body) {
   return null; // valid
 }
 
+// Object keys that reach through the prototype chain. They satisfy an ordinary
+// identifier pattern, so a character check alone admits them, and they behave as
+// values rather than as absent lookups: WP_SCALE_MAP.constructor is a function and
+// WP_SCALE_MAP.__proto__ is an object, both of which pass an `undefined` test.
+// Used on the write paths below and again on the stats read path.
+const RESERVED_OBJECT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+// CIA-1-009: POST /school-climate/session-complete answered 202 before checking
+// anything, and the fire-and-forget Supabase write then used the caller's own
+// session_id as the sessions primary key. Validation belongs before that 202,
+// because once the 202 is sent the exchange is over and a rejected payload has no
+// remaining way to be reported.
+//
+// Every bound here admits current traffic unchanged. The four live callers, the
+// students, teachers, staff and parents pages, post a `<prefix>-<uuid>` session id
+// of 39 to 43 characters, a school_id resolved from the token-validate response,
+// and one of the four singular role names. All four post fire-and-forget with
+// `.catch(() => {})` and never read the response, so a 400 stays invisible to the
+// participant while becoming visible in the log, where a silently skipped write
+// was not.
+//
+// rated_responses is bounded but not required to be non-empty: the parents, staff
+// and students pages post an always-empty array by way of finding WIA-1-003, which
+// the operator deferred, and requiring content here would reject three of the four
+// roles.
+function validateSessionCompletePayload(body) {
+  const { session_id, deployment_id, school_id, role, rated_responses, dream_big_responses } = body || {};
+
+  if (typeof session_id !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(session_id))
+    return 'Invalid or missing session_id';
+  if (typeof school_id !== 'string' || !school_id || school_id.length > 128)
+    return 'Invalid or missing school_id';
+  if (typeof role !== 'string' || !VALID_ROLES.has(role))
+    return 'Invalid or missing role';
+  if (deployment_id != null && (typeof deployment_id !== 'string' || deployment_id.length > 160))
+    return 'Invalid deployment_id';
+  if (rated_responses != null && (!Array.isArray(rated_responses) || rated_responses.length > 40))
+    return 'rated_responses must be an array of at most 40 items';
+  if (dream_big_responses != null && (!Array.isArray(dream_big_responses) || dream_big_responses.length > 40))
+    return 'dream_big_responses must be an array of at most 40 items';
+
+  return null; // valid
+}
+
+// CIA-1-021: POST /workplace/log_response checked only that session_id and
+// question_id were present, then coerced every field through String(). An object
+// session_id became the literal '[object Object]', collapsing every such session
+// into one bucket in GET /workplace/stats. Seven further fields, section, domain,
+// organization, department, organization_id, token and response_mode, were not
+// coerced at all, so a non-string value was written into Firestore with its own
+// shape intact.
+//
+// The rating scale is deliberately not validated here. The live client at
+// workplace/interview/page.tsx:291 posts a numeric score, while WP_SCALE_MAP is
+// keyed on lowercased text labels, so no rating produced by real traffic is a
+// recognized label. Rejecting unrecognized labels, which is what the register
+// proposes, would reject every legitimate write on the route. Which of the two
+// forms is canonical is a data-model question, routed to clarity360-data-engineer
+// and clarity360-tech-lead rather than settled here.
+function validateWorkplaceLogPayload(body) {
+  const { session_id, section, question_id, domain, organization, department,
+    organization_id, token, rating, followup_text, response_mode } = body || {};
+
+  if (typeof session_id !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(session_id))
+    return 'Invalid or missing session_id';
+  if (typeof question_id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(question_id) ||
+      RESERVED_OBJECT_KEYS.has(question_id))
+    return 'Invalid or missing question_id';
+
+  for (const [name, value] of [['section', section], ['domain', domain],
+    ['organization', organization], ['department', department],
+    ['organization_id', organization_id], ['token', token], ['response_mode', response_mode]]) {
+    if (value != null && (typeof value !== 'string' || value.length > 128))
+      return `Invalid ${name}`;
+  }
+
+  // A number is accepted because that is what the live client sends; see the note
+  // on the scale above. A reserved key is refused whichever form wins that call.
+  if (rating != null && typeof rating !== 'string' && typeof rating !== 'number')
+    return 'rating must be a string or a number';
+  if (typeof rating === 'string' && RESERVED_OBJECT_KEYS.has(rating.trim().toLowerCase()))
+    return 'Invalid rating';
+  if (followup_text != null && typeof followup_text !== 'string')
+    return 'followup_text must be a string';
+
+  return null; // valid
+}
+
 // ─── Auth Middleware ──────────────────────────────────────────────────────────
 function requireAccessKey(req, res, next) {
   const expected = process.env.CLARITY_ACCESS_KEY;
@@ -825,9 +913,18 @@ app.post('/school-climate/session-complete', requireAccessKey, async (req, res) 
     session_id, deployment_id, school_id, role,
     response_mode, token, is_test, started_at, completed_at,
     rated_responses, dream_big_responses
-  } = req.body;
+  } = req.body || {};
 
-  // Respond immediately — never block the client on Supabase
+  // CIA-1-009: validate before the 202, never after it. The Supabase write below
+  // is fire-and-forget, so this is the only point at which a bad payload can still
+  // be refused rather than silently dropped downstream.
+  const validationError = validateSessionCompletePayload(req.body);
+  if (validationError) {
+    log.warn('session-complete payload rejected', { reason: validationError });
+    return res.status(400).json({ error: validationError });
+  }
+
+  // Respond immediately, never block the client on Supabase
   res.status(202).json({ status: 'accepted' });
 
   // Fire-and-forget Supabase write after response sent
@@ -4940,8 +5037,9 @@ app.post('/workplace/log_response', requireAccessKey, async (req, res) => {
   try {
     const { session_id, section, question_id, domain, organization,
       department, organization_id, token, rating, followup_text, response_mode } = req.body || {};
-    if (!session_id || !question_id) {
-      return res.status(400).json({ error: 'missing session_id or question_id' });
+    const validationError = validateWorkplaceLogPayload(req.body);
+    if (validationError) {
+      return res.status(400).json({ error: validationError });
     }
     const doc = {
       session_id: String(session_id),
@@ -5152,12 +5250,20 @@ app.get('/workplace/stats', requireAdminJWT, async (req, res) => {
 
       const qid = doc.question_id ? String(doc.question_id) : '';
       const ratingLabel = doc.rating != null ? String(doc.rating).trim().toLowerCase() : '';
-      const numeric = WP_SCALE_MAP[ratingLabel];
-      if (qid && numeric != null) {
+      // CIA-1-021 read tolerance. Documents written before the validation added to
+      // /workplace/log_response may still hold a reserved object key, so the two map
+      // lookups here are own-property checks rather than plain bracket reads. A plain
+      // read reaches the prototype: WP_SCALE_MAP['constructor'] is a function, which
+      // passes the `!= null` test below and turns questionTotals[qid] into a
+      // concatenated string, rendering that question average and the whole domain
+      // average NaN from a single stored document.
+      const numeric = Object.hasOwn(WP_SCALE_MAP, ratingLabel) ? WP_SCALE_MAP[ratingLabel] : undefined;
+      if (qid && !RESERVED_OBJECT_KEYS.has(qid) && numeric != null) {
         sessions[sid].ratings[qid] = numeric;
         questionTotals[qid] = (questionTotals[qid] || 0) + numeric;
         questionCounts[qid] = (questionCounts[qid] || 0) + 1;
-        const dom = WP_DOMAIN_MAP[qid] || doc.domain || 'other';
+        const mappedDomain = Object.hasOwn(WP_DOMAIN_MAP, qid) ? WP_DOMAIN_MAP[qid] : null;
+        const dom = mappedDomain || (typeof doc.domain === 'string' ? doc.domain : '') || 'other';
         domainTotals[dom] = (domainTotals[dom] || 0) + numeric;
         domainCounts[dom] = (domainCounts[dom] || 0) + 1;
         totalRated++;
