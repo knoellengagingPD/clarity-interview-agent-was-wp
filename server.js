@@ -440,6 +440,33 @@ async function fetchWithTimeout(url, options, timeoutMs = 10_000) {
 // ─── Express App Setup ────────────────────────────────────────────────────────
 const app = express();
 
+// CIA-1-020: Express 4 does not forward a rejected promise from a handler to the
+// error middleware, so an async handler that throws sends no response at all. The
+// socket stays open until the client or Vercel times it out, billed for the full
+// timeout, and the unhandledRejection listener at the foot of this file suppresses
+// Node's default throw, turning what would be a loud crash into a silent hang.
+// Express 5 handles this natively; this project pins express ^4.19.2.
+//
+// The wrap happens once, here, rather than at each of the 65 route registrations,
+// so a route added later cannot forget it and the route contract stays readable.
+// Two kinds of argument pass through untouched: a non-function, which is a path, a
+// regex, or a router, and any four-argument function, because Express identifies
+// error-handling middleware by arity and rewrapping one to three arguments would
+// silently disable it. A single-argument call on one of these method names is a
+// settings read rather than a route registration, and passes through unchanged for
+// the same reason.
+const asyncRoute = (fn) =>
+  typeof fn !== 'function' || fn.length >= 4
+    ? fn
+    : function (req, res, next) {
+      return Promise.resolve(fn(req, res, next)).catch(next);
+    };
+
+for (const method of ['get', 'post', 'put', 'patch', 'delete', 'options', 'all', 'use']) {
+  const register = app[method].bind(app);
+  app[method] = (...args) => register(...args.map(asyncRoute));
+}
+
 const corsOptions = {
   origin: function(origin, callback) {
     const allowed = [
@@ -2378,7 +2405,12 @@ Write in second person ("you", "your"). Be warm, specific, and meaningful. Refer
 app.get('/fmp/participant/:code', requireAccessKey, async (req, res) => {
   if (!fmpDb) return res.status(503).json({ error: 'Find My Purpose Firestore not available' });
   const normalizedCode = (req.params.code || '').toUpperCase().trim();
-  const emailParam = (req.query.email || '').trim().toLowerCase();
+  // CIA-1-020: the default `extended` query parser turns ?email[]=a&email[]=b into
+  // an array and ?email[k]=v into an object, so this value is not necessarily a
+  // string. Treating a non-string as absent matches the optional-email contract
+  // below, where an empty value skips the check rather than failing it.
+  const rawEmail = req.query.email;
+  const emailParam = (typeof rawEmail === 'string' ? rawEmail : '').trim().toLowerCase();
 
   if (!normalizedCode) return res.status(400).json({ error: 'Return code is required' });
 
