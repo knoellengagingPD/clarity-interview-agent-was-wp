@@ -39,7 +39,18 @@ const log = {
 };
 
 // ─── In-memory response cache (reduces Firestore reads on hot endpoints) ─────
-// Keyed by string, values expire after TTL. Single-instance safe (Vercel/Railway).
+// Keyed by string, values expire after TTL. NOT cross-instance safe: this is a
+// per-process Map, and this backend runs as multi-instance Vercel serverless
+// functions, so a write's cacheInvalidatePrefix() call only clears the copy
+// held by the container that handled that write — other warm containers keep
+// serving their own cached value until it hits its TTL. In practice this is a
+// bounded, low-impact staleness window rather than a correctness bug: the
+// admin dashboard (workplace-interview-agent/src/app/admin/page.tsx) has no
+// auto-refresh interval anywhere — it only fetches on page load, tab/filter
+// change, or an explicit operator click of the Refresh button — so the worst
+// case is an operator hitting a stale container and needing to click Refresh
+// again after the TTL elapses to see a just-submitted response. TTLs below are
+// kept short specifically to bound that window.
 const _responseCache = new Map();
 function cacheGet(key) {
   const entry = _responseCache.get(key);
@@ -56,8 +67,8 @@ function cacheInvalidatePrefix(prefix) {
     if (key.startsWith(prefix)) _responseCache.delete(key);
   }
 }
-const CACHE_TTL_HEALTH   = 5  * 60 * 1000; //  5 minutes — health endpoint
-const CACHE_TTL_SESSIONS = 2  * 60 * 1000; //  2 minutes — session list endpoints
+const CACHE_TTL_HEALTH   = 30 * 1000; // 30 seconds — health endpoint
+const CACHE_TTL_SESSIONS = 30 * 1000; // 30 seconds — session list endpoints (bounds cross-instance staleness on manual refresh)
 
 // ─── Random value generation (CIA-1-002) ──────────────────────────────────────
 // Every random value in this file goes through one of these two helpers, so
@@ -303,6 +314,20 @@ RULES:
 }
 
 // ─── In-Memory Rate Limiter ───────────────────────────────────────────────────
+// LIMITATION, stated plainly: this Map is process-local. This backend runs as
+// a Vercel classic serverless function, where different requests can land on
+// different, independent containers, each starting with its own empty Map,
+// and any container can be recycled at any time. So this limiter never
+// actually enforces "N requests per window" globally — it is only ever a
+// best-effort, per-container counter, and it's easy to bypass by accident
+// (unlucky/lucky container routing) let alone on purpose. That's an
+// acceptable trade for coarse abuse/cost control on routes that aren't
+// guarding a secret. It is NOT acceptable for /admin/login, which guards the
+// single shared admin password against online guessing, so that route uses
+// its own Firestore-backed limiter instead (see adminLoginRateLimit, near the
+// route) that actually holds its cap across containers. Do not assume this
+// Map-based limiter provides a real distributed limit anywhere it's used.
+//
 // Counters are keyed by bucket plus IP. Keying by IP alone gave every
 // rate-limited route one shared counter while each route compared that count
 // against its own max [NEW-G], with consequences in both directions:
@@ -807,7 +832,27 @@ app.post(
     // not participant responses. question_id values like "turn_1", "turn_16",
     // "turn_36" are emitted by the client for every AI utterance and must never
     // be persisted to Firestore.
-    if (section.startsWith('school_climate_') && question_id.startsWith('turn_')) {
+    //
+    // Scoped to school_climate_* only — do not broaden this to find_my_purpose /
+    // find_my_purpose_s2. FMP's client (find-my-purpose-app) also names its
+    // question_ids "turn_N", but there they are not scaffolding to discard: FMP
+    // has no separate structured per-question storage the way school_climate has
+    // (edscls_safety/dream_big/etc.), so every turn_N doc's followup_text — both
+    // "[assistant] ..." and "[user] ..." lines — IS the interview transcript.
+    // /fmp/admin/sessions builds each session's `turns` from every persisted doc,
+    // and the admin Reports tab (find-my-purpose-app/src/app/admin/page.tsx)
+    // filters those turns to question_id.startsWith('turn_') and joins their
+    // followup_text as the transcript fed into /fmp/admin/generate-report.
+    // /fmp/participant/:code separately reads every doc for a session_id (no
+    // question_id filter at all) to extract Session 1 themes for Session 2.
+    // Skipping any FMP turn_N doc here would silently delete real answer content
+    // and break both report paths. The `!isFMP` guard below is redundant with
+    // the section.startsWith('school_climate_') check today, but makes the
+    // exclusion explicit so a future broadening of this condition can't
+    // accidentally start dropping FMP turns (turn_1 in particular also drives
+    // the sessions_used counter increment and session-existence in
+    // /fmp/admin/sessions further down).
+    if (!isFMP && section.startsWith('school_climate_') && question_id.startsWith('turn_')) {
       log.info('Skipping turn record — not a participant response', { section, question_id });
       return res.json({ status: 'ok' });
     }
@@ -865,25 +910,29 @@ app.post('/school-climate/session-complete', requireAccessKey, async (req, res) 
     return res.status(400).json({ error: validationError });
   }
 
-  // Respond immediately, never block the client on Supabase
-  res.status(202).json({ status: 'accepted' });
-
-  // Fire-and-forget Supabase write after response sent
-  writeSessionToSupabase({
-    sessionId: session_id,
-    deploymentId: deployment_id || `${school_id}-unknown`,
-    schoolId: school_id,
-    role,
-    responseMode: response_mode || 'voice',
-    token: token || null,
-    isTest: is_test || false,
-    startedAt: started_at || null,
-    completedAt: completed_at || new Date().toISOString(),
-    ratedResponses: rated_responses || [],
-    dreamBigResponses: dream_big_responses || []
-  }).catch(err => {
+  // Await the Supabase write before responding so the container isn't frozen
+  // (and the write silently dropped) after the response is sent. The client
+  // itself never awaits this call (see endInterview()), so the extra latency
+  // here is not UX-relevant.
+  try {
+    await writeSessionToSupabase({
+      sessionId: session_id,
+      deploymentId: deployment_id || `${school_id}-unknown`,
+      schoolId: school_id,
+      role,
+      responseMode: response_mode || 'voice',
+      token: token || null,
+      isTest: is_test || false,
+      startedAt: started_at || null,
+      completedAt: completed_at || new Date().toISOString(),
+      ratedResponses: rated_responses || [],
+      dreamBigResponses: dream_big_responses || []
+    });
+    res.status(202).json({ status: 'accepted' });
+  } catch (err) {
     console.error('[school-climate/session-complete] Supabase write failed:', err);
-  });
+    res.status(202).json({ status: 'accepted' });
+  }
 });
 
 // ─── Admin: Clarity 360 Sessions ─────────────────────────────────────────────
@@ -1870,10 +1919,7 @@ app.post('/fmp/clients', requireAdminOrAccessKey, async (req, res) => {
     if (!name || typeof name !== 'string') return res.status(400).json({ error: 'Client name is required' });
     if (!access_code || typeof access_code !== 'string') return res.status(400).json({ error: 'Access code is required' });
 
-    // Check for duplicate access code
-    const existing = await fmpDb.collection('clients').where('access_code', '==', access_code).limit(1).get();
-    if (!existing.empty) return res.status(409).json({ error: 'Access code already in use' });
-
+    const normalizedCode = access_code.trim().toUpperCase();
     const doc = {
       name: name.trim(),
       email: email?.trim() || '',
@@ -1882,13 +1928,25 @@ app.post('/fmp/clients', requireAdminOrAccessKey, async (req, res) => {
       sessions_used: 0,
       billing_cycle_start: billing_cycle_start || new Date().toISOString().split('T')[0],
       billing_cycle_end: billing_cycle_end || '',
-      access_code: access_code.trim().toUpperCase(),
+      access_code: normalizedCode,
       notes: notes?.trim() || '',
       active: true,
       created_at: new Date().toISOString(),
     };
 
-    const ref = await fmpDb.collection('clients').add(doc);
+    // Doc ID is the access code itself, so create() enforces uniqueness
+    // atomically instead of relying on a racy where()-then-add() check: two
+    // concurrent creates for the same code can no longer both succeed and
+    // split /log_response's client_id (== access_code) lookup across two docs.
+    const ref = fmpDb.collection('clients').doc(normalizedCode);
+    try {
+      await ref.create(doc);
+    } catch (createErr) {
+      if (createErr.code === 6) { // ALREADY_EXISTS
+        return res.status(409).json({ error: 'Access code already in use' });
+      }
+      throw createErr;
+    }
     log.info('FMP client created', { client_id: ref.id, name: doc.name });
     return res.status(201).json({ status: 'ok', id: ref.id, client: { id: ref.id, ...doc } });
   } catch (e) {
@@ -3392,10 +3450,76 @@ function constantTimeEquals(supplied, expected) {
   return crypto.timingSafeEqual(a, b);
 }
 
-// The rate limit is an in-memory Map keyed by IP, so on Vercel each function
-// instance keeps its own counter. It raises the cost of online password guessing
-// without capping it globally.
-app.post('/admin/login', rateLimit({ windowMs: 15 * 60_000, max: 5 }), (req, res) => {
+// Firestore-backed limiter, distinct from the in-memory rateLimit() used
+// elsewhere in this file (see the LIMITATION note at its definition above).
+// ADMIN_PASSWORD is a single shared secret, so the cap on guesses needs to
+// actually hold across containers, not just within whichever one happens to
+// serve a given request.
+//
+// One doc per client IP, keyed by a hash rather than the raw IP so an IPv6
+// literal or forwarded-header oddity can't produce an invalid or colliding
+// Firestore doc ID. { count, windowStart } tracked in the doc; a transaction
+// wraps the read-check-write so two concurrent requests from the same IP
+// can't both observe the pre-increment count and both slip under the cap.
+// Same 5-attempts/15-minute budget, and the same 429 body shape, as the
+// in-memory limiter it replaces here.
+const ADMIN_LOGIN_MAX_ATTEMPTS = 5;
+const ADMIN_LOGIN_WINDOW_MS = 15 * 60_000;
+
+async function adminLoginRateLimit(req, res, next) {
+  if (!db) {
+    // No Firestore, no distributed counter. Fail closed on this route rather
+    // than silently letting password guesses through uncapped.
+    log.error('Admin login rate limiter: Firestore unavailable');
+    return res.status(500).json({ error: 'Server misconfiguration' });
+  }
+
+  const ip = req.ip || req.connection.remoteAddress || 'unknown';
+  const docId = crypto.createHash('sha256').update(ip, 'utf8').digest('hex');
+
+  try {
+    const ref = db.collection('rate_limits').doc(`admin_login_${docId}`);
+    const now = Date.now();
+
+    const verdict = await db.runTransaction(async (txn) => {
+      const snap = await txn.get(ref);
+      const data = snap.exists ? snap.data() : null;
+      let count = data ? Number(data.count) || 0 : 0;
+      let windowStart = data ? Number(data.windowStart) || now : now;
+
+      if (now - windowStart > ADMIN_LOGIN_WINDOW_MS) {
+        count = 0;
+        windowStart = now;
+      }
+
+      count += 1;
+
+      if (count > ADMIN_LOGIN_MAX_ATTEMPTS) {
+        // Over the cap: don't persist this attempt, leaving the stored count
+        // exactly at the cap so it keeps rejecting for the rest of the
+        // window instead of ratcheting upward forever.
+        return { ok: false };
+      }
+
+      txn.set(ref, { count, windowStart });
+      return { ok: true, count };
+    });
+
+    res.setHeader('X-RateLimit-Limit', ADMIN_LOGIN_MAX_ATTEMPTS);
+    if (!verdict.ok) {
+      log.warn('Admin login rate limit exceeded', { ip });
+      res.setHeader('X-RateLimit-Remaining', 0);
+      return res.status(429).json({ error: 'Too many requests. Please slow down.' });
+    }
+    res.setHeader('X-RateLimit-Remaining', Math.max(0, ADMIN_LOGIN_MAX_ATTEMPTS - verdict.count));
+    next();
+  } catch (err) {
+    log.error('Admin login rate limiter failed', { error: err.message });
+    return res.status(500).json({ error: 'Server misconfiguration' });
+  }
+}
+
+app.post('/admin/login', adminLoginRateLimit, (req, res) => {
   // Set before any branch so every response from this route carries it, token
   // or not, and no proxy or browser cache retains the token.
   res.setHeader('Cache-Control', 'no-store');
@@ -3724,27 +3848,33 @@ app.post('/district/:districtId/deployment', requireAdminJWT, async (req, res) =
   const { districtId } = req.params;
   const { schoolName, schoolId, roles, tokenIds, deploymentId } = req.body || {};
   try {
-    const ref  = db.collection('district_portals').doc(districtId);
-    const snap = await ref.get();
-    if (!snap.exists) return res.status(404).json({ error: 'District portal not found' });
-    const data      = snap.data();
-    const deployments = data.deployments || [];
+    const ref = db.collection('district_portals').doc(districtId);
     // CIA-1-002: not a credential, converted anyway so `Math.random` appears
     // nowhere in this file and the planned no-restricted-properties lint rule
     // needs no per-site exception. Same base36 alphabet and 5-character length.
-    const depId     = deploymentId || `dep-${Date.now()}-${randomCode('abcdefghijklmnopqrstuvwxyz0123456789', 5)}`;
-    // Find existing active deployment for this school, or create a new one
-    const existingIdx = deployments.findIndex(d => d.schoolId === schoolId && d.status === 'active');
-    if (existingIdx >= 0) {
-      // Merge tokens and roles into existing
-      const existing = deployments[existingIdx];
-      const mergedTokens = [...new Set([...(existing.tokenIds || []), ...(tokenIds || [])])];
-      const mergedRoles  = [...new Set([...(existing.roles  || []), ...(roles  || [])])];
-      deployments[existingIdx] = { ...existing, tokenIds: mergedTokens, roles: mergedRoles };
-    } else {
-      deployments.unshift({ deploymentId: depId, schoolName, schoolId, openedAt: new Date(), closedAt: null, status: 'active', roles: roles || [], tokenIds: tokenIds || [] });
-    }
-    await ref.update({ deployments });
+    const depId = deploymentId || `dep-${Date.now()}-${randomCode('abcdefghijklmnopqrstuvwxyz0123456789', 5)}`;
+    // Transaction so a concurrent upsert/close on the same district doc can't
+    // clobber this read-modify-write of the whole `deployments` array.
+    const notFound = await db.runTransaction(async (txn) => {
+      const snap = await txn.get(ref);
+      if (!snap.exists) return true;
+      const data = snap.data();
+      const deployments = data.deployments || [];
+      // Find existing active deployment for this school, or create a new one
+      const existingIdx = deployments.findIndex(d => d.schoolId === schoolId && d.status === 'active');
+      if (existingIdx >= 0) {
+        // Merge tokens and roles into existing
+        const existing = deployments[existingIdx];
+        const mergedTokens = [...new Set([...(existing.tokenIds || []), ...(tokenIds || [])])];
+        const mergedRoles  = [...new Set([...(existing.roles  || []), ...(roles  || [])])];
+        deployments[existingIdx] = { ...existing, tokenIds: mergedTokens, roles: mergedRoles };
+      } else {
+        deployments.unshift({ deploymentId: depId, schoolName, schoolId, openedAt: new Date(), closedAt: null, status: 'active', roles: roles || [], tokenIds: tokenIds || [] });
+      }
+      txn.update(ref, { deployments });
+      return false;
+    });
+    if (notFound) return res.status(404).json({ error: 'District portal not found' });
     log.info('District deployment upserted', { districtId, schoolId, depId });
     return res.json({ status: 'ok', deploymentId: depId });
   } catch (e) {
@@ -3759,17 +3889,26 @@ app.patch('/district/:districtId/deployment/:deploymentId/close', requireAdminJW
   if (!db) return res.status(503).json({ error: 'Database unavailable' });
   const { districtId, deploymentId } = req.params;
   try {
-    const ref  = db.collection('district_portals').doc(districtId);
-    const snap = await ref.get();
-    if (!snap.exists) return res.status(404).json({ error: 'District portal not found' });
-    const data        = snap.data();
-    const deployments = (data.deployments || []).map(d =>
-      d.deploymentId === deploymentId ? { ...d, status: 'closed', closedAt: new Date() } : d
-    );
-    await ref.update({ deployments });
+    const ref = db.collection('district_portals').doc(districtId);
+    // Transaction so a concurrent upsert/close on the same district doc can't
+    // clobber this read-modify-write of the whole `deployments` array. The
+    // email send stays outside the transaction body since it's a non-idempotent
+    // side effect and transaction callbacks can be retried on contention.
+    const result = await db.runTransaction(async (txn) => {
+      const snap = await txn.get(ref);
+      if (!snap.exists) return { notFound: true };
+      const data = snap.data();
+      const deployments = (data.deployments || []).map(d =>
+        d.deploymentId === deploymentId ? { ...d, status: 'closed', closedAt: new Date() } : d
+      );
+      txn.update(ref, { deployments });
+      const closed = deployments.find(d => d.deploymentId === deploymentId);
+      return { notFound: false, contactEmail: data.contactEmail, closed };
+    });
+    if (result.notFound) return res.status(404).json({ error: 'District portal not found' });
     // Email superintendent
-    const closed = deployments.find(d => d.deploymentId === deploymentId);
-    if (process.env.RESEND_API_KEY && data.contactEmail) {
+    const { contactEmail, closed } = result;
+    if (process.env.RESEND_API_KEY && contactEmail) {
       const closeHtml = `
         <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:540px;margin:0 auto;background:#f9fafb;padding:32px 20px;">
           <div style="background:linear-gradient(135deg,#6366f1,#4f46e5);border-radius:12px 12px 0 0;padding:28px 32px;">
@@ -3785,7 +3924,7 @@ app.patch('/district/:districtId/deployment/:deploymentId/close', requireAdminJW
       await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from: 'Clarity 360 <noreply@clarity360hq.com>', to: [data.contactEmail], subject: 'Your Clarity 360 Deployment Has Closed — Reports Coming Soon', html: closeHtml }),
+        body: JSON.stringify({ from: 'Clarity 360 <noreply@clarity360hq.com>', to: [contactEmail], subject: 'Your Clarity 360 Deployment Has Closed — Reports Coming Soon', html: closeHtml }),
       });
     }
     log.info('District deployment closed', { districtId, deploymentId });
@@ -3862,11 +4001,7 @@ app.post('/district/:districtId/report', requireAdminJWT, async (req, res) => {
     return res.status(400).json({ error: 'type must be "brief" or "detailed"' });
   }
   try {
-    const ref  = db.collection('district_portals').doc(districtId);
-    const snap = await ref.get();
-    if (!snap.exists) return res.status(404).json({ error: 'District portal not found' });
-    const data    = snap.data();
-    const reports = data.reports || [];
+    const ref = db.collection('district_portals').doc(districtId);
     const reportEntry = {
       deploymentId: deploymentId || null,
       type,
@@ -3874,8 +4009,18 @@ app.post('/district/:districtId/report', requireAdminJWT, async (req, res) => {
       content,
       available: available !== false,
     };
-    reports.unshift(reportEntry); // newest first
-    await ref.update({ reports });
+    // Transaction so a concurrent deployment upsert/close on the same district
+    // doc can't clobber this read-modify-write of the whole `reports` array.
+    const notFound = await db.runTransaction(async (txn) => {
+      const snap = await txn.get(ref);
+      if (!snap.exists) return true;
+      const data = snap.data();
+      const reports = data.reports || [];
+      reports.unshift(reportEntry); // newest first
+      txn.update(ref, { reports });
+      return false;
+    });
+    if (notFound) return res.status(404).json({ error: 'District portal not found' });
     log.info('Report saved to district portal', { districtId, type, deploymentId });
     return res.json({ status: 'ok', report: reportEntry });
   } catch (e) {
@@ -4229,6 +4374,31 @@ app.get('/school-climate/sessions', requireAdminJWT, async (req, res) => {
       return true;
     });
 
+    // Derive a rating's domain bucket. Prefer the domain already recorded on the
+    // document (see doc.domain write in /log_response's school_climate_ branch,
+    // where req.body.domain is stored verbatim). Fall back to a question_id
+    // prefix match — mirroring getDomain() used by the quantitative-report PDF
+    // generator — for older docs written before the domain field existed. Real
+    // question IDs (S1, TS1, PS1, EN1, ...) never contain an underscore, so the
+    // previous `qid.split('_')[0]` logic always fell through to "other".
+    function domainForRating(qid, docDomain) {
+      if (docDomain && docDomain !== 'dream_big' && docDomain !== 'open') return docDomain;
+      if (qid.startsWith('TEN')) return 'environment';
+      if (qid.startsWith('TE'))  return 'engagement';
+      if (qid.startsWith('TS'))  return 'safety';
+      if (qid.startsWith('AIR')) return 'ai_readiness';
+      if (qid.startsWith('SEN')) return 'environment';
+      if (qid.startsWith('SE'))  return 'engagement';
+      if (qid.startsWith('SS'))  return 'safety';
+      if (qid.startsWith('PEN')) return 'environment';
+      if (qid.startsWith('PE'))  return 'engagement';
+      if (qid.startsWith('PS'))  return 'safety';
+      if (qid.startsWith('EN'))  return 'environment';
+      if (qid.startsWith('E'))   return 'engagement';
+      if (qid.startsWith('S'))   return 'safety';
+      return 'other';
+    }
+
     // Aggregate by role (e.g. "teachers") → sessions + running score totals
     const byRole = {};
 
@@ -4264,18 +4434,24 @@ app.get('/school-climate/sessions', requireAdminJWT, async (req, res) => {
       // Mark session as text-mode if any doc has response_mode: 'text'
       if (doc.response_mode === 'text') rd.sessions[sid].response_mode = 'text';
 
-      // Accumulate scores only for rated questions
-      if (doc.question_id && doc.rating !== undefined && doc.rating !== null) {
-        const qid = String(doc.question_id);
+      // Accumulate scores only for rated participant answers. Excludes turn_*
+      // conversational scaffolding docs (server-side AI turns logged under a
+      // question_id like "turn_1", never a real survey answer) and rating: 0
+      // placeholder docs, mirroring the exclusions already applied in
+      // /api/generate-quantitative-report. Historical turn_* docs may still
+      // exist in Firestore from before the fix that stopped writing new ones.
+      const qidRaw = doc.question_id ? String(doc.question_id) : '';
+      const isTurnScaffold = /^turn_\d+$/.test(qidRaw);
+      if (qidRaw && !isTurnScaffold && doc.rating !== undefined && doc.rating !== null) {
+        const qid = qidRaw;
         const rating = Number(doc.rating);
-        if (!isNaN(rating)) {
+        if (!isNaN(rating) && rating !== 0) {
           rd.sessions[sid].ratings[qid] = rating;
 
           rd.question_totals[qid] = (rd.question_totals[qid] || 0) + rating;
           rd.question_counts[qid] = (rd.question_counts[qid] || 0) + 1;
 
-          // Derive domain from question_id prefix (e.g. "safety_3" → "safety")
-          const domain = qid.includes('_') ? qid.split('_')[0] : 'other';
+          const domain = domainForRating(qid, doc.domain);
           rd.domain_totals[domain] = (rd.domain_totals[domain] || 0) + rating;
           rd.domain_counts[domain] = (rd.domain_counts[domain] || 0) + 1;
           rd.total_rated_responses++;
