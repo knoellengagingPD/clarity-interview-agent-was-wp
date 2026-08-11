@@ -5514,13 +5514,23 @@ app.post('/api/generate-quantitative-report', requireAdminJWT, async (req, res) 
     // S1 together into one statistically meaningless row. For role !== 'all'
     // (the common case — every doc already shares the same role) this yields
     // the same buckets as before, just keyed with a `${role}::` prefix.
+    // doc.role is written singular ('teacher', 'student', 'parent', 'staff' —
+    // see logClimateResponse() in each school-climate page.tsx), but
+    // QUESTION_TEXT_MAP/domainOrder/the role request param all use the plural
+    // form ('teachers', 'students', ...) matching the section/URL convention.
+    // Normalize here so bucket keys, the [Role] display prefix, and the
+    // QUESTION_TEXT_MAP lookup all agree — otherwise the lookup silently
+    // misses and falls back to showing the raw question_id.
+    const ROLE_SINGULAR_TO_PLURAL = { teacher: 'teachers', student: 'students', parent: 'parents', staff: 'staff' };
+    const normalizeRole = (r) => ROLE_SINGULAR_TO_PLURAL[r] || r;
+
     const questionBuckets = {}; // "role::qid" → { qid, role, ratings: number[], domain: string }
     for (const doc of allDocs) {
       const qid = String(doc.question_id || '').trim();
       if (!qid) continue;
       const rating = Number(doc.rating);
       if (isNaN(rating)) continue;
-      const docRole = doc.role || role;
+      const docRole = normalizeRole(doc.role) || role;
       // Prefer the domain already recorded on the document (see doc.domain
       // write in /log_response's school_climate_ branch) over question_id
       // prefix-matching, mirroring domainForRating() used by /school-climate/sessions.
