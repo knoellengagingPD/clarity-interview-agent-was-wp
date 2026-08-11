@@ -2880,10 +2880,15 @@ app.post('/fmp/checkin/:code', requireAccessKey, async (req, res) => {
     // Store as a sub-document under the participant
     await participantRef.collection('checkins').add(checkinDoc);
 
-    // Increment the checkins_completed counter on the parent document
+    // Increment the checkins_completed counter on the parent document.
+    // FieldValue.increment(1) rather than read-then-write: two concurrent
+    // check-in submissions (retry, double-click) both reading the same base
+    // count would otherwise both write count+1 and silently lose one
+    // increment. newCount below is optimistic display value for the response
+    // body only — the atomic increment is what's actually persisted.
     const newCount = (participant.checkins_completed || 0) + 1;
     await participantRef.update({
-      checkins_completed: newCount,
+      checkins_completed: admin.firestore.FieldValue.increment(1),
       last_checkin_at: new Date().toISOString(),
       status: 'checkin_in_progress',
       // If any goal was updated, merge the updated text back into participant.goals
@@ -2978,29 +2983,34 @@ app.post('/fmp/checkin/:code', requireAccessKey, async (req, res) => {
   </table>
 </body></html>`;
 
-      // Fire-and-forget email sends
-      fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          from: process.env.FMP_FROM_EMAIL || 'Find My Purpose <onboarding@resend.dev>',
-          to: [participantEmail],
-          subject: `Check-In ${headerText(ordinalLabel)} Complete — Your Progress`,
-          html: checkinEmailHtml,
-        }),
-      }).catch(e => log.warn('FMP check-in participant email failed', { error: e.message }));
+      // Awaited before responding — same reasoning as the Supabase write fix
+      // above: a fire-and-forget fetch here can be silently killed by the
+      // container freezing right after res.json() is sent, dropping both
+      // emails with no trace beyond a log.warn that likely never runs.
+      await Promise.allSettled([
+        fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: process.env.FMP_FROM_EMAIL || 'Find My Purpose <onboarding@resend.dev>',
+            to: [participantEmail],
+            subject: `Check-In ${headerText(ordinalLabel)} Complete — Your Progress`,
+            html: checkinEmailHtml,
+          }),
+        }).catch(e => log.warn('FMP check-in participant email failed', { error: e.message })),
 
-      fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          from: process.env.FMP_FROM_EMAIL || 'Find My Purpose <onboarding@resend.dev>',
-          to: ['knoell@engagingonline.net'],
-          reply_to: participantEmail,
-          subject: `FMP Check-In ${headerText(ordinalLabel)} — ${headerText(participantEmail)}`,
-          html: checkinEmailHtml,
-        }),
-      }).catch(e => log.warn('FMP check-in admin copy failed', { error: e.message }));
+        fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: process.env.FMP_FROM_EMAIL || 'Find My Purpose <onboarding@resend.dev>',
+            to: ['knoell@engagingonline.net'],
+            reply_to: participantEmail,
+            subject: `FMP Check-In ${headerText(ordinalLabel)} — ${headerText(participantEmail)}`,
+            html: checkinEmailHtml,
+          }),
+        }).catch(e => log.warn('FMP check-in admin copy failed', { error: e.message })),
+      ]);
     }
 
     return res.status(201).json({ status: 'ok', checkin_number: num, checkins_completed: newCount });
@@ -4910,9 +4920,10 @@ app.post('/fmp/save-checkin', requireAccessKey, async (req, res) => {
 
     await participantRef.collection('checkins').add(checkinDoc);
 
+    // Atomic increment — see the identical fix + rationale in /fmp/checkin/:code above.
     const newCount = (participant.checkins_completed || 0) + 1;
     await participantRef.update({
-      checkins_completed: newCount,
+      checkins_completed: admin.firestore.FieldValue.increment(1),
       last_checkin_at: checkinDoc.completed_at,
     });
 
@@ -5487,6 +5498,18 @@ app.post('/api/generate-quantitative-report', requireAdminJWT, async (req, res) 
     // ── 3. Fetch & filter responses ──────────────────────────────────────────
     // Single-field where clause per section (avoids Firestore composite-index).
     // school_id, open-ended, and test filtering done in memory.
+    // doc.role is written singular ('teacher', 'student', 'parent', 'staff' —
+    // see logClimateResponse() in each school-climate page.tsx), but the role
+    // request param, QUESTION_TEXT_MAP, and domainOrder all use the plural
+    // form ('teachers', 'students', ...) matching the section/URL convention.
+    // Normalize up front — this must happen before the role filter below runs,
+    // not just before the later bucket/text-lookup step, otherwise every
+    // single-role request (anything but 'staff', where singular happens to
+    // equal plural, or 'all', which skips the filter) silently matches zero
+    // documents and produces a blank report.
+    const ROLE_SINGULAR_TO_PLURAL = { teacher: 'teachers', student: 'students', parent: 'parents', staff: 'staff' };
+    const normalizeRole = (r) => ROLE_SINGULAR_TO_PLURAL[r] || r;
+
     const allDocs = [];
     await Promise.all(sections.map(async (section) => {
       const snap = await db.collection('responses').where('section', '==', section).get();
@@ -5499,7 +5522,7 @@ app.post('/api/generate-quantitative-report', requireAdminJWT, async (req, res) 
         if (data.rating === undefined || data.rating === null) return;
         if (data.rating === 0) return;                                       // exclude zero-rated turn records
         if (/^turn_\d+$/.test(String(data.question_id || ''))) return;      // Fix 1: exclude turn_N conversational records
-        if (role !== 'all' && data.role !== role) return;                   // Fix 2: enforce role filter
+        if (role !== 'all' && normalizeRole(data.role) !== role) return;    // Fix 2: enforce role filter (normalized)
         allDocs.push({ id: d.id, ...data });
       });
     }));
@@ -5514,16 +5537,6 @@ app.post('/api/generate-quantitative-report', requireAdminJWT, async (req, res) 
     // S1 together into one statistically meaningless row. For role !== 'all'
     // (the common case — every doc already shares the same role) this yields
     // the same buckets as before, just keyed with a `${role}::` prefix.
-    // doc.role is written singular ('teacher', 'student', 'parent', 'staff' —
-    // see logClimateResponse() in each school-climate page.tsx), but
-    // QUESTION_TEXT_MAP/domainOrder/the role request param all use the plural
-    // form ('teachers', 'students', ...) matching the section/URL convention.
-    // Normalize here so bucket keys, the [Role] display prefix, and the
-    // QUESTION_TEXT_MAP lookup all agree — otherwise the lookup silently
-    // misses and falls back to showing the raw question_id.
-    const ROLE_SINGULAR_TO_PLURAL = { teacher: 'teachers', student: 'students', parent: 'parents', staff: 'staff' };
-    const normalizeRole = (r) => ROLE_SINGULAR_TO_PLURAL[r] || r;
-
     const questionBuckets = {}; // "role::qid" → { qid, role, ratings: number[], domain: string }
     for (const doc of allDocs) {
       const qid = String(doc.question_id || '').trim();
