@@ -195,83 +195,88 @@ const EDSCLS_SAFETY = loadJSON('edscls_safety.json');
 const DREAM_BIG     = loadJSON('dream_big.json');
 
 // ─── School Climate Question Bank (shared across routes) ──────────────────────
+// Preview list only (used by the pre-survey "what to expect" invitation email,
+// send-deployment-email below). Must mirror each role's live QUESTIONS array in
+// src/app/school-climate/*/page.tsx — this had drifted to an entirely different,
+// older question set that no longer matches what participants are actually
+// asked. Rebuilt 2026-08-11 from the current frontend source.
 const CLIMATE_QUESTIONS = {
   students: [
-    { n: 1,  text: 'I feel safe at this school.',                                                                                           open: false },
-    { n: 2,  text: 'Students treat each other with respect.',                                                                                open: false },
-    { n: 3,  text: 'Adults at this school treat students with respect.',                                                                     open: false },
-    { n: 4,  text: 'I feel comfortable telling an adult if something feels unsafe.',                                                         open: false },
-    { n: 5,  text: 'I feel like I belong at this school.',                                                                                   open: false },
-    { n: 6,  text: 'Teachers care about how I am doing.',                                                                                    open: false },
-    { n: 7,  text: 'I have at least one adult at school I can talk to if I have a problem.',                                                 open: false },
-    { n: 8,  text: 'My ideas and opinions matter at this school.',                                                                           open: false },
-    { n: 9,  text: 'I try my best to do well in school.',                                                                                    open: false },
-    { n: 10, text: 'Learning at this school is interesting to me.',                                                                          open: false },
-    { n: 11, text: 'My school is clean and well cared for.',                                                                                 open: false },
-    { n: 12, text: 'I have the materials and supplies I need to learn.',                                                                     open: false },
-    { n: 13, text: 'Students from different backgrounds are respected at this school.',                                                      open: false },
-    { n: 14, text: 'This school helps me learn and grow.',                                                                                   open: false },
-    { n: 15, text: 'If you could change one or two things to make school better for everyone, what would they be?',                          open: true  },
-    { n: 16, text: 'What is one thing about your school that you really love and never want to change?',                                     open: true  },
+    { n: 1,  text: 'I feel safe at this school.',                                                       open: false },
+    { n: 2,  text: 'I worry about violence or fights happening here.',                                  open: false },
+    { n: 3,  text: 'Teachers and adults treat students with respect.',                                  open: false },
+    { n: 4,  text: 'Students treat each other with respect.',                                           open: false },
+    { n: 5,  text: 'If I report bullying, an adult will do something about it.',                        open: false },
+    { n: 6,  text: 'The rules at this school are fair.',                                                open: false },
+    { n: 7,  text: 'Students at this school are bullied.',                                               open: false },
+    { n: 8,  text: 'I feel like I belong at this school.',                                               open: false },
+    { n: 9,  text: 'There is at least one adult at this school I can go to for help.',                  open: false },
+    { n: 10, text: 'This school supports students of different backgrounds and identities.',            open: false },
+    { n: 11, text: 'When I am upset, adults at this school show they care.',                             open: false },
+    { n: 12, text: 'My teachers give me feedback that helps me get better.',                             open: false },
+    { n: 13, text: 'Students have opportunities to participate in activities at this school.',           open: false },
+    { n: 14, text: 'This school has the resources and materials I need to learn.',                       open: false },
+    { n: 15, text: 'If you could change one or two things to make school better for everyone, what would they be?', open: true },
+    { n: 16, text: 'What is one thing about your school that you really love and never want to change?', open: true },
   ],
   teachers: [
-    { n: 1,  text: 'I feel safe at this school.',                                                                                           open: false },
-    { n: 2,  text: 'Students treat teachers with respect.',                                                                                 open: false },
-    { n: 3,  text: 'Teachers at this school treat students with respect.',                                                                  open: false },
-    { n: 4,  text: 'The rules for student behavior are fair.',                                                                              open: false },
-    { n: 5,  text: 'I am comfortable reporting safety concerns to school administrators.',                                                  open: false },
-    { n: 6,  text: 'Adults at this school try to stop bullying when they see it.',                                                          open: false },
-    { n: 7,  text: 'This school effectively addresses bullying and student conflicts.',                                                     open: false },
-    { n: 8,  text: 'I feel like I belong at this school.',                                                                                  open: false },
-    { n: 9,  text: 'I consistently have enough emotional energy to meet the demands of my students and colleagues.',                        open: false },
-    { n: 10, text: 'The staff at this school work well together.',                                                                          open: false },
-    { n: 11, text: 'School administrators value my opinions and ideas.',                                                                    open: false },
-    { n: 12, text: 'I feel supported by the school administration.',                                                                        open: false },
-    { n: 13, text: 'Communication among staff at this school is open and honest.',                                                          open: false },
-    { n: 14, text: 'I have at least one colleague I can turn to for support at work.',                                                      open: false },
-    { n: 15, text: 'I have access to adequate instructional materials and resources.',                                                      open: false },
-    { n: 16, text: 'Teachers have sufficient time to collaborate with colleagues.',                                                         open: false },
-    { n: 17, text: 'Student behavior allows effective teaching.',                                                                           open: false },
+    { n: 1,  text: 'I feel safe at this school.',                                                        open: false },
+    { n: 2,  text: 'Students treat teachers with respect.',                                              open: false },
+    { n: 3,  text: 'Teachers at this school treat students with respect.',                               open: false },
+    { n: 4,  text: 'The rules for student behavior are fair.',                                           open: false },
+    { n: 5,  text: 'I am comfortable reporting safety concerns to school administrators.',                open: false },
+    { n: 6,  text: 'Adults at this school try to stop bullying when they see it.',                       open: false },
+    { n: 7,  text: 'This school effectively addresses bullying and student conflicts.',                  open: false },
+    { n: 8,  text: 'I feel like I belong at this school.',                                                open: false },
+    { n: 9,  text: 'I consistently have enough emotional energy to meet the demands of my students and colleagues.', open: false },
+    { n: 10, text: 'The staff at this school work well together.',                                       open: false },
+    { n: 11, text: 'School administrators value my opinions and ideas.',                                 open: false },
+    { n: 12, text: 'I feel supported by the school administration.',                                     open: false },
+    { n: 13, text: 'Communication among staff at this school is open and honest.',                       open: false },
+    { n: 14, text: 'I have at least one colleague I can turn to for support at work.',                   open: false },
+    { n: 15, text: 'I have access to adequate instructional materials and resources.',                   open: false },
+    { n: 16, text: 'Teachers have sufficient time to collaborate with colleagues.',                      open: false },
+    { n: 17, text: 'Student behavior allows effective teaching.',                                        open: false },
     { n: 18, text: 'How prepared do you feel your school is to thoughtfully integrate Artificial Intelligence and AI tools into teaching and learning?', open: false },
-    { n: 19, text: 'If funding were not a barrier, what one or two practical changes would most improve teaching and learning at this school?', open: true  },
-    { n: 20, text: 'What is one thing this school does really well that you never want to change?',                                         open: true  },
-    { n: 21, text: 'Where do you think AI could be most helpful in your school — and where do you have concerns about it being used?',      open: true  },
+    { n: 19, text: 'If funding were not a barrier, what one or two practical changes would most improve teaching and learning at this school?', open: true },
+    { n: 20, text: 'What is one thing this school does really well that you never want to change?',      open: true },
+    { n: 21, text: 'Where do you think AI could be most helpful in your school — and where do you have concerns about it being used?', open: true },
   ],
   staff: [
-    { n: 1,  text: 'I feel safe at this school.',                                                                                           open: false },
-    { n: 2,  text: 'Students treat staff with respect.',                                                                                     open: false },
-    { n: 3,  text: 'Staff address bullying and harassment promptly.',                                                                        open: false },
-    { n: 4,  text: 'I feel comfortable raising safety concerns with school leadership.',                                                     open: false },
-    { n: 5,  text: 'The rules for student behavior are clear and consistently enforced.',                                                    open: false },
-    { n: 6,  text: 'I feel valued as a member of this school\'s team.',                                                                      open: false },
-    { n: 7,  text: 'School leadership treats all staff with respect.',                                                                       open: false },
-    { n: 8,  text: 'I feel a sense of belonging in this school community.',                                                                  open: false },
-    { n: 9,  text: 'My contributions to this school are recognized.',                                                                        open: false },
-    { n: 10, text: 'There is open and honest communication among staff.',                                                                    open: false },
-    { n: 11, text: 'The school building and grounds are clean and well maintained.',                                                         open: false },
-    { n: 12, text: 'I have the tools and resources I need to do my job well.',                                                               open: false },
-    { n: 13, text: 'Physical conditions at this school support my ability to do my job.',                                                    open: false },
-    { n: 14, text: 'Staff work together to create a positive environment for students.',                                                     open: false },
-    { n: 15, text: 'This school is a welcoming place for students of all backgrounds.',                                                      open: false },
-    { n: 16, text: 'If funding were not a barrier, what one or two changes would most improve the experience of staff and students at this school?', open: true  },
-    { n: 17, text: 'What is one thing about working at this school that you value most and never want to change?',                           open: true  },
+    { n: 1,  text: 'I feel safe at this school.',                                                        open: false },
+    { n: 2,  text: 'Students treat staff members with respect.',                                         open: false },
+    { n: 3,  text: 'Students at this school treat each other with respect.',                             open: false },
+    { n: 4,  text: 'Adults at this school try to stop bullying.',                                        open: false },
+    { n: 5,  text: 'The rules at this school are fair.',                                                 open: false },
+    { n: 6,  text: 'I am comfortable reporting safety concerns to administrators.',                      open: false },
+    { n: 7,  text: 'Bullying is a problem at this school.',                                               open: false },
+    { n: 8,  text: 'I feel like I belong at this school.',                                                open: false },
+    { n: 9,  text: 'I feel supported by the teachers at this school.',                                   open: false },
+    { n: 10, text: 'I feel supported by the school administration.',                                     open: false },
+    { n: 11, text: 'My input is valued when decisions are made.',                                        open: false },
+    { n: 12, text: 'Communication among staff is open and honest.',                                      open: false },
+    { n: 13, text: 'The school building and grounds are clean and well maintained.',                     open: false },
+    { n: 14, text: 'I have the materials and supplies I need to perform my job effectively.',            open: false },
+    { n: 15, text: 'Overall this school provides a positive environment for students and staff.',        open: false },
+    { n: 16, text: 'If funding were not a barrier, what one or two changes would most improve the experience of staff and students at this school?', open: true },
+    { n: 17, text: 'What is one thing about working at this school that you value most and never want to change?', open: true },
   ],
   parents: [
-    { n: 1,  text: 'My child feels safe at school.',                                                       open: false },
-    { n: 2,  text: 'Teachers and staff treat students with respect.',                                      open: false },
-    { n: 3,  text: 'The rules for student behavior are fair.',                                             open: false },
-    { n: 4,  text: 'The school deals effectively with bullying.',                                          open: false },
-    { n: 5,  text: 'I feel comfortable reporting safety concerns to school staff.',                        open: false },
-    { n: 6,  text: 'I feel welcome at my child\'s school.',                                                open: false },
-    { n: 7,  text: 'The teachers at this school care about my child.',                                     open: false },
-    { n: 8,  text: 'The school keeps me informed about my child\'s academic progress.',                   open: false },
-    { n: 9,  text: 'School staff respond promptly to my questions and concerns.',                         open: false },
-    { n: 10, text: 'I have opportunities to share my opinions about school decisions.',                   open: false },
-    { n: 11, text: 'My child\'s teachers have high expectations for my child.',                           open: false },
-    { n: 12, text: 'Students from different backgrounds are respected at this school.',                   open: false },
-    { n: 13, text: 'My child has access to the resources needed to succeed at school.',                   open: false },
-    { n: 14, text: 'Teachers give my child feedback that helps them learn.',                               open: false },
-    { n: 15, text: 'This school is a welcoming place for students of all backgrounds.',                   open: false },
+    { n: 1,  text: 'My child feels safe at school.',                                                     open: false },
+    { n: 2,  text: 'Teachers and staff treat students with respect.',                                    open: false },
+    { n: 3,  text: 'The rules for student behavior are fair.',                                           open: false },
+    { n: 4,  text: 'The school deals effectively with bullying.',                                        open: false },
+    { n: 5,  text: 'I feel comfortable reporting safety concerns to school staff.',                      open: false },
+    { n: 6,  text: 'I feel welcome at my child\'s school.',                                               open: false },
+    { n: 7,  text: 'The teachers at this school care about my child.',                                   open: false },
+    { n: 8,  text: 'The school keeps me informed about my child\'s academic progress.',                  open: false },
+    { n: 9,  text: 'School staff respond promptly to my questions and concerns.',                        open: false },
+    { n: 10, text: 'I have opportunities to share my opinions about school decisions.',                  open: false },
+    { n: 11, text: 'My child\'s teachers have high expectations for my child.',                          open: false },
+    { n: 12, text: 'Students from different backgrounds are respected at this school.',                  open: false },
+    { n: 13, text: 'My child has access to the resources needed to succeed at school.',                  open: false },
+    { n: 14, text: 'Teachers give my child feedback that helps them learn.',                             open: false },
+    { n: 15, text: 'This school is a welcoming place for students of all backgrounds.',                  open: false },
     { n: 16, text: 'If funding were not a barrier, what one or two changes would most improve your child\'s experience at this school?', open: true },
     { n: 17, text: 'What is one thing this school does really well for students and families that you never want to change?', open: true },
   ],
@@ -5501,16 +5506,31 @@ app.post('/api/generate-quantitative-report', requireAdminJWT, async (req, res) 
 
     log.info('Quant report: fetched responses', { schoolId, role, productType, docCount: allDocs.length });
 
-    // ── 4. Bucket ratings by question_id ────────────────────────────────────
-    const questionBuckets = {}; // qid → { ratings: number[], domain: string }
+    // ── 4. Bucket ratings by role::question_id ───────────────────────────────
+    // Keyed by `${role}::${qid}` rather than bare qid: all four school-climate
+    // roles independently reuse the same plain IDs (S1, E1, EN1, ...) for
+    // completely different questions. Bucketing by bare qid would, for a
+    // role === 'all' report, silently average e.g. teachers' S1 and students'
+    // S1 together into one statistically meaningless row. For role !== 'all'
+    // (the common case — every doc already shares the same role) this yields
+    // the same buckets as before, just keyed with a `${role}::` prefix.
+    const questionBuckets = {}; // "role::qid" → { qid, role, ratings: number[], domain: string }
     for (const doc of allDocs) {
       const qid = String(doc.question_id || '').trim();
       if (!qid) continue;
       const rating = Number(doc.rating);
       if (isNaN(rating)) continue;
-      const domain = getDomain(qid);
-      if (!questionBuckets[qid]) questionBuckets[qid] = { ratings: [], domain };
-      questionBuckets[qid].ratings.push(rating);
+      const docRole = doc.role || role;
+      // Prefer the domain already recorded on the document (see doc.domain
+      // write in /log_response's school_climate_ branch) over question_id
+      // prefix-matching, mirroring domainForRating() used by /school-climate/sessions.
+      // Fall back to getDomain(qid) for older docs missing the field.
+      const domain = (doc.domain && doc.domain !== 'dream_big' && doc.domain !== 'open')
+        ? doc.domain
+        : getDomain(qid);
+      const key = `${docRole}::${qid}`;
+      if (!questionBuckets[key]) questionBuckets[key] = { qid, role: docRole, ratings: [], domain };
+      questionBuckets[key].ratings.push(rating);
     }
 
     // ── 5. Descriptive stats ─────────────────────────────────────────────────
@@ -5527,76 +5547,97 @@ app.post('/api/generate-quantitative-report', requireAdminJWT, async (req, res) 
     }
 
     // ── 6. Question text + domain lookup ─────────────────────────────────────
+    // Role-scoped: all four school-climate roles independently reuse the same
+    // plain IDs (S1, E1, EN1, ...) for completely different questions, so a
+    // flat id→text map can only ever be correct for one role. Text below is
+    // copied verbatim from each role's QUESTIONS array in
+    // src/app/school-climate/{role}/page.tsx in the frontend repo. Open
+    // (dream_big/ai_readiness) question text is included for completeness
+    // even though open responses are excluded from this report upstream.
     const QUESTION_TEXT_MAP = {
-      // Students
-      S1: 'I feel safe at this school.',
-      S2: 'Students treat each other with respect.',
-      S3: 'Adults at this school treat students with respect.',
-      S4: 'I feel comfortable telling an adult if something feels unsafe.',
-      E1: 'I feel like I belong at this school.',
-      E2: 'Teachers care about how I am doing.',
-      E3: 'I have at least one adult at school I can talk to if I have a problem.',
-      E4: 'My ideas and opinions matter at this school.',
-      E5: 'I try my best to do well in school.',
-      E6: 'Learning at this school is interesting to me.',
-      EN1: 'My school is clean and well cared for.',
-      EN2: 'I have the materials and supplies I need to learn.',
-      EN3: 'Students from different backgrounds are respected at this school.',
-      EN4: 'This school helps me learn and grow.',
-      // Teachers
-      TS1: 'I feel safe at this school.',
-      TS2: 'Students treat each other with respect.',
-      TS3: 'Students treat staff with respect.',
-      TS4: 'Staff address bullying and harassment promptly.',
-      TS5: 'I feel comfortable raising safety concerns with school leadership.',
-      TE1: 'I feel valued as a professional at this school.',
-      TE2: 'School leadership supports my growth and development.',
-      TE3: 'I have the autonomy to make meaningful decisions in my classroom.',
-      TE4: 'There is open and honest communication among staff.',
-      TE6: 'I feel a sense of belonging in this school community.',
-      TEN1: 'I consistently have enough emotional energy to meet the demands of my students and colleagues.',
-      TEN2: 'The school building and grounds are clean and well maintained.',
-      TEN3: 'I have the materials and supplies I need to do my job well.',
-      TEN4: 'Class sizes allow me to meet the needs of my students.',
-      TEN5: 'Physical conditions at this school support effective teaching and learning.',
-      TEN6: 'Student behavior allows effective teaching.',
-      AIR1: 'How prepared do you feel your school is to thoughtfully integrate Artificial Intelligence and AI tools into teaching and learning?',
-      // Staff
-      SS1: 'I feel safe at this school.',
-      SS2: 'Students treat staff with respect.',
-      SS3: 'Staff address bullying and harassment promptly.',
-      SS4: 'I feel comfortable raising safety concerns with school leadership.',
-      SS5: 'The rules for student behavior are clear and consistently enforced.',
-      SE1: 'I feel valued as a member of this school\'s team.',
-      SE2: 'School leadership treats all staff with respect.',
-      SE3: 'I feel a sense of belonging in this school community.',
-      SE4: 'My contributions to this school are recognized.',
-      SE5: 'There is open and honest communication among staff.',
-      SEN1: 'The school building and grounds are clean and well maintained.',
-      SEN2: 'I have the tools and resources I need to do my job well.',
-      SEN3: 'Physical conditions at this school support my ability to do my job.',
-      SEN4: 'Staff work together to create a positive environment for students.',
-      SEN5: 'This school is a welcoming place for students of all backgrounds.',
-      // Parents
-      PS1: 'My child feels safe at school.',
-      PS2: 'Teachers and staff treat students with respect.',
-      PS3: 'The rules for student behavior are fair.',
-      PS4: 'The school deals effectively with bullying.',
-      PS5: 'I feel comfortable reporting safety concerns to school staff.',
-      PE1: 'I feel welcome at my child\'s school.',
-      PE2: 'The teachers at this school care about my child.',
-      PE3: 'The school keeps me informed about my child\'s academic progress.',
-      PE4: 'School staff respond promptly to my questions and concerns.',
-      PE5: 'I have opportunities to share my opinions about school decisions.',
-      PE6: 'My child\'s teachers have high expectations for my child.',
-      PE7: 'Students from different backgrounds are respected at this school.',
-      PEN1: 'My child has access to the resources needed to succeed at school.',
-      PEN2: 'Teachers give my child feedback that helps them learn.',
-      PEN3: 'This school is a welcoming place for students of all backgrounds.',
+      students: {
+        S1: 'I feel safe at this school.',
+        S2: 'I worry about violence or fights happening here.',
+        S3: 'Teachers and adults treat students with respect.',
+        S4: 'Students treat each other with respect.',
+        S5: 'If I report bullying, an adult will do something about it.',
+        S6: 'The rules at this school are fair.',
+        S7: 'Students at this school are bullied.',
+        E1: 'I feel like I belong at this school.',
+        E2: 'There is at least one adult at this school I can go to for help.',
+        E3: 'This school supports students of different backgrounds and identities.',
+        E4: 'When I am upset, adults at this school show they care.',
+        E5: 'My teachers give me feedback that helps me get better.',
+        E6: 'Students have opportunities to participate in activities at this school.',
+        EN1: 'This school has the resources and materials I need to learn.',
+        DB1: 'If you could change one or two things to make school better for everyone, what would they be?',
+        DB2: 'What is one thing about your school that you really love and never want to change?',
+      },
+      teachers: {
+        S1: 'I feel safe at this school.',
+        S2: 'Students treat teachers with respect.',
+        S3: 'Teachers at this school treat students with respect.',
+        S4: 'The rules for student behavior are fair.',
+        S5: 'I am comfortable reporting safety concerns to school administrators.',
+        S6: 'Adults at this school try to stop bullying when they see it.',
+        S7: 'This school effectively addresses bullying and student conflicts.',
+        E1: 'I feel like I belong at this school.',
+        RES1: 'I consistently have enough emotional energy to meet the demands of my students and colleagues.',
+        E2: 'The staff at this school work well together.',
+        E3: 'School administrators value my opinions and ideas.',
+        E4: 'I feel supported by the school administration.',
+        E5: 'Communication among staff at this school is open and honest.',
+        E6: 'I have at least one colleague I can turn to for support at work.',
+        EN1: 'I have access to adequate instructional materials and resources.',
+        EN2: 'Teachers have sufficient time to collaborate with colleagues.',
+        EN3: 'Student behavior allows effective teaching.',
+        AIR1: 'How prepared do you feel your school is to thoughtfully integrate Artificial Intelligence and AI tools into teaching and learning?',
+        DB1: 'If funding were not a barrier, what one or two practical changes would most improve teaching and learning at this school?',
+        DB2: 'What is one thing this school does really well that you never want to change?',
+        DB3: 'Where do you think AI could be most helpful in your school — and where do you have concerns about it being used?',
+      },
+      staff: {
+        S1: 'I feel safe at this school.',
+        S2: 'Students treat staff members with respect.',
+        S3: 'Students at this school treat each other with respect.',
+        S4: 'Adults at this school try to stop bullying.',
+        S5: 'The rules at this school are fair.',
+        S6: 'I am comfortable reporting safety concerns to administrators.',
+        S7: 'Bullying is a problem at this school.',
+        E1: 'I feel like I belong at this school.',
+        E2: 'I feel supported by the teachers at this school.',
+        E3: 'I feel supported by the school administration.',
+        E4: 'My input is valued when decisions are made.',
+        E5: 'Communication among staff is open and honest.',
+        EN1: 'The school building and grounds are clean and well maintained.',
+        EN2: 'I have the materials and supplies I need to perform my job effectively.',
+        EN3: 'Overall this school provides a positive environment for students and staff.',
+        DB1: 'If funding were not a barrier, what one or two changes would most improve the experience of staff and students at this school?',
+        DB2: 'What is one thing about working at this school that you value most and never want to change?',
+      },
+      parents: {
+        S1: 'My child feels safe at school.',
+        S2: 'Teachers and staff treat students with respect.',
+        S3: 'The rules for student behavior are fair.',
+        S4: 'The school deals effectively with bullying.',
+        S5: 'I feel comfortable reporting safety concerns to school staff.',
+        E1: 'I feel welcome at my child\'s school.',
+        E2: 'The teachers at this school care about my child.',
+        E3: 'The school keeps me informed about my child\'s academic progress.',
+        E4: 'School staff respond promptly to my questions and concerns.',
+        E5: 'I have opportunities to share my opinions about school decisions.',
+        E6: 'My child\'s teachers have high expectations for my child.',
+        E7: 'Students from different backgrounds are respected at this school.',
+        EN1: 'My child has access to the resources needed to succeed at school.',
+        EN2: 'Teachers give my child feedback that helps them learn.',
+        EN3: 'This school is a welcoming place for students of all backgrounds.',
+        DB1: 'If funding were not a barrier, what one or two changes would most improve your child\'s experience at this school?',
+        DB2: 'What is one thing this school does really well for students and families that you never want to change?',
+      },
     };
 
-    function getQuestionText(qid) {
-      return QUESTION_TEXT_MAP[qid] || qid;
+    function getQuestionText(qid, qRole) {
+      return QUESTION_TEXT_MAP[qRole]?.[qid] || qid;
     }
 
     function getDomain(qid) {
@@ -5604,6 +5645,7 @@ app.post('/api/generate-quantitative-report', requireAdminJWT, async (req, res) 
       if (qid.startsWith('TE'))  return 'engagement';
       if (qid.startsWith('TS'))  return 'safety';
       if (qid.startsWith('AIR')) return 'ai_readiness';
+      if (qid.startsWith('RES')) return 'engagement';
       if (qid.startsWith('SEN')) return 'environment';
       if (qid.startsWith('SE'))  return 'engagement';
       if (qid.startsWith('SS'))  return 'safety';
@@ -5625,19 +5667,31 @@ app.post('/api/generate-quantitative-report', requireAdminJWT, async (req, res) 
     const grouped = {};
     for (const d of domainOrder) grouped[d] = [];
 
-    // Sort qids: by domain order first, then by numeric suffix
-    const sortedQids = Object.keys(questionBuckets).sort((a, b) => {
-      const aD = getDomain(a), bD = getDomain(b);
+    // Sort bucket keys ("role::qid"): by domain order first, then by numeric
+    // suffix of the qid, then by role (stable tie-break for role === 'all'
+    // reports where two roles share the same qid + domain + number).
+    const sortedBucketKeys = Object.keys(questionBuckets).sort((a, b) => {
+      const bucketA = questionBuckets[a], bucketB = questionBuckets[b];
+      const aD = bucketA.domain, bD = bucketB.domain;
       const aI = domainOrder.indexOf(aD), bI = domainOrder.indexOf(bD);
       if (aI !== bI) return (aI < 0 ? 999 : aI) - (bI < 0 ? 999 : bI);
-      return (parseInt(a.replace(/^[A-Z]+/, ''), 10) || 0) - (parseInt(b.replace(/^[A-Z]+/, ''), 10) || 0);
+      const aNum = parseInt(bucketA.qid.replace(/^[A-Z]+/, ''), 10) || 0;
+      const bNum = parseInt(bucketB.qid.replace(/^[A-Z]+/, ''), 10) || 0;
+      if (aNum !== bNum) return aNum - bNum;
+      return bucketA.role.localeCompare(bucketB.role);
     });
 
     let qNum = 1;
-    for (const qid of sortedQids) {
-      const { ratings, domain } = questionBuckets[qid];
-      const stats  = computeStats(ratings);
-      const text   = getQuestionText(qid);
+    for (const key of sortedBucketKeys) {
+      const { qid, role: bucketRole, ratings, domain } = questionBuckets[key];
+      const stats = computeStats(ratings);
+      let text = getQuestionText(qid, bucketRole);
+      // In an "all roles" report, the same qid can legitimately appear once
+      // per role (e.g. teachers' S1 and students' S1 are different
+      // questions) — prefix with the role so the two rows are unambiguous.
+      if (role === 'all') {
+        text = `[${bucketRole.charAt(0).toUpperCase()}${bucketRole.slice(1)}] ${text}`;
+      }
       const bucket = domainOrder.includes(domain) ? domain : domainOrder[0];
       grouped[bucket].push({ qNum: qNum++, qid, text, ...stats });
     }
