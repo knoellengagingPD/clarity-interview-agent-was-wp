@@ -1473,6 +1473,205 @@ app.post('/admin/notify-interview-complete', requireAccessKey, async (req, res) 
   }
 });
 
+// ─── Shared helpers: Administrator Interview report generation + lead email ────
+// Used by both /admin/generate-administrator-report (manual, dashboard-triggered,
+// can span many sessions) and /interview/send-lead-report (automatic, fires once
+// per completed interview — see interview/page.tsx's endInterview()).
+async function generateAdministratorReportText(prompt) {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 8192,
+      system: 'You are writing an institutional report on behalf of Clarity 360. Write in first-person institutional voice, as if Clarity 360 is the author delivering findings directly to the reader — for example: "Across our administrator interviews, the dominant theme was..." or "Our findings indicate...". Never write "Clarity 360 found that...", "According to Clarity 360...", or any phrase that treats Clarity 360 as an outside observer. Do not reference the interview process, the AI, or the tool itself. The report should read as authoritative synthesis authored by the organization.'
+        + ' Write a structured report with these sections: 1. Executive Summary, 2. Key Themes & Findings, 3. Areas of Strength, 4. Areas for Growth / Improvement, 5. Actionable Recommendations. Do not reference the interview format or AI.'
+        + untrustedDataRule('session') + noMarkupRule(),
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error('[generateAdministratorReportText] Anthropic API returned HTTP', response.status, ':', JSON.stringify(data));
+    throw new Error('Report generation failed');
+  }
+  if (data.type === 'error') {
+    console.error('[generateAdministratorReportText] Anthropic API error object:', JSON.stringify(data.error));
+    throw new Error('Report generation failed');
+  }
+  if (!data.content?.[0]?.text) {
+    console.error('[generateAdministratorReportText] Unexpected response structure (no content[0].text):', JSON.stringify(data).substring(0, 500));
+    throw new Error('Unexpected response from Claude API');
+  }
+  return data.content[0].text;
+}
+
+// Emails a generated report to a single superintendent_leads doc and stamps
+// reportSentAt. Throws on failure so callers can log/handle per-lead.
+async function sendLeadReportEmail(lead, reportText) {
+  if (!process.env.RESEND_API_KEY) {
+    console.log('[sendLeadReportEmail] Skipping — RESEND_API_KEY not set');
+    return;
+  }
+  const reportHtml = markdownToHtml(reportText);
+  const subject = headerText(`Your Clarity 360 Leadership Interview Report — ${lead.firstName} ${lead.lastName}`);
+  const emailHtml = `<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#f8fafc;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;padding:40px 20px;">
+    <tr><td align="center">
+      <table width="620" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(99,102,241,0.10);">
+        <tr>
+          <td style="background:linear-gradient(135deg,#1e1b4b,#312e81);padding:36px 48px;">
+            <p style="margin:0 0 4px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:700;color:rgba(255,255,255,0.6);letter-spacing:0.12em;text-transform:uppercase;">Clarity 360</p>
+            <h1 style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:24px;font-weight:800;color:#ffffff;line-height:1.3">Your Leadership Interview Report</h1>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:36px 48px 24px;">
+            <p style="margin:0 0 20px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;color:#374151;line-height:1.7;">
+              Dear ${escapeHtml(lead.firstName)},
+            </p>
+            <p style="margin:0 0 28px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;color:#374151;line-height:1.7;">
+              Thank you for participating in the Clarity 360 Administrator Interview. Below is the synthesized report based on the responses gathered from your district&apos;s leadership listening tour.
+            </p>
+            <div style="background:#f8fafc;border-radius:12px;padding:32px 36px;border:1px solid #e0e7ff;margin-bottom:28px;">
+              ${reportHtml}
+            </div>
+            <div style="background:linear-gradient(135deg,rgba(220,38,38,0.06),rgba(185,28,28,0.04));border-radius:12px;padding:24px 28px;border:1.5px solid rgba(220,38,38,0.15);text-align:center;margin-bottom:24px;">
+              <p style="margin:0 0 16px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;font-weight:700;color:#1e1b4b;line-height:1.5;">
+                Ready to bring Clarity 360 to your district?<br>Schedule a conversation with our team.
+              </p>
+              <a href="https://clarity360hq.com/#schedule" style="display:inline-block;background:linear-gradient(135deg,#dc2626,#b91c1c);color:white;text-decoration:none;padding:14px 36px;border-radius:50px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;font-weight:800;box-shadow:0 4px 16px rgba(220,38,38,0.30);">
+                Schedule a Conversation →
+              </a>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#f8fafc;padding:20px 48px;border-top:1px solid #e0e7ff;">
+            <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#94a3b8;">
+              This report was generated by Clarity 360 · <a href="https://clarity360hq.com" style="color:#6366f1;text-decoration:none;">clarity360hq.com</a>
+            </p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+  const emailRes = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      from: 'Clarity 360 <noreply@clarity360hq.com>',
+      to: [lead.email],
+      reply_to: 'knoell@engagingpd.com',
+      subject,
+      html: emailHtml,
+    }),
+  });
+  const emailData = await emailRes.json();
+  if (emailRes.ok) {
+    console.log('[sendLeadReportEmail] Report emailed to', lead.email, '— Resend ID:', emailData.id);
+    if (db) {
+      await db.collection('superintendent_leads').doc(lead.id).update({
+        reportSentAt: new Date().toISOString(),
+      });
+    }
+  } else {
+    console.error('[sendLeadReportEmail] Resend error for', lead.email, ':', JSON.stringify(emailData));
+    throw new Error('Email send failed');
+  }
+}
+
+// ─── Interview: Send Individual Lead Report (automatic, participant-facing) ────
+// Fires once, automatically, right after a superintendent/administrator
+// interview session completes (see interview/page.tsx's endInterview() —
+// fire-and-forget, never blocks the participant's completion screen).
+// Generates a report scoped to JUST this one session and emails it to the lead
+// captured for this session_id in `superintendent_leads`. This is what actually
+// fulfills the "We'll send your personalized report to this email when it's
+// ready" promise shown on the pre-interview lead-capture screen.
+//
+// Distinct from /admin/generate-administrator-report below, which is a
+// manually-triggered, multi-session AGGREGATE report run from the admin
+// dashboard — that route also still emails any lead whose session falls in
+// the batch it was generated for, so a lead could receive both this
+// individual report and a later aggregate one if their session is included
+// in a dashboard-generated report.
+app.post('/interview/send-lead-report', requireAccessKey, async (req, res) => {
+  const { session_id } = req.body;
+  if (!session_id) return res.status(400).json({ error: 'session_id is required' });
+  if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
+
+  try {
+    // 1. Find the lead captured for this session before find anything else —
+    // if nobody submitted the pre-interview capture form, there's no one to email.
+    const leadSnap = await db.collection('superintendent_leads')
+      .where('session_id', '==', session_id)
+      .limit(1)
+      .get();
+    if (leadSnap.empty) {
+      console.log('[interview/send-lead-report] No lead found for session', session_id, '— skipping');
+      return res.json({ status: 'ok', skipped: 'no_lead' });
+    }
+    const leadDoc = leadSnap.docs[0];
+    const lead = { id: leadDoc.id, ...leadDoc.data() };
+    if (!lead.email) {
+      return res.json({ status: 'ok', skipped: 'no_email' });
+    }
+
+    // 2. Fetch this session's structured responses (skip turn_* scaffolding and
+    // the post-interview interest-selection record — neither belongs in the report).
+    const snapshot = await db.collection('responses')
+      .where('session_id', '==', session_id)
+      .where('section', '==', 'superintendent_interview')
+      .get();
+    if (snapshot.empty) {
+      console.warn('[interview/send-lead-report] No responses found for session', session_id);
+      return res.status(404).json({ error: 'No responses found for this session' });
+    }
+
+    const turns = snapshot.docs
+      .map(d => d.data())
+      .filter(doc => doc.question_id && !String(doc.question_id).startsWith('turn_') && doc.question_id !== 'followup_interest')
+      .sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+
+    if (turns.length === 0) {
+      console.warn('[interview/send-lead-report] No structured responses (only turn/interest records) for session', session_id);
+      return res.status(404).json({ error: 'No structured responses found for this session' });
+    }
+
+    // 3. Assemble the same delimited-session prompt format used by the aggregate route.
+    const turnLines = turns
+      .map((t, j) => `  Response ${j + 1} (${promptText(t.question_id, 120)}): ${promptText(t.followup_text || t.text || t.response || '') || '(no response recorded)'}`)
+      .join('\n');
+    const sessionBlock = `<session index="1" id="${promptText(session_id, 120)}">\n${turnLines}\n</session>`;
+    const prompt = `Synthesize the Administrator Interview session below into the stakeholder report described in your instructions.\n\n${sessionBlock}`;
+
+    // 4. Generate the report.
+    const reportText = await generateAdministratorReportText(prompt);
+    console.log('[interview/send-lead-report] Report generated for session', session_id, '—', reportText.length, 'chars');
+
+    // 5. Email it to the lead.
+    await sendLeadReportEmail(lead, reportText);
+
+    return res.json({ status: 'ok' });
+  } catch (e) {
+    console.error('[interview/send-lead-report] Error for session', session_id, ':', e.message);
+    return res.status(500).json({ error: 'Failed to generate/send report' });
+  }
+});
+
 // ─── Admin: Administrator Interview Generate Report (server-side Firestore fetch) ─
 // Unlike /admin/generate-report (which takes a pre-assembled prompt), this route
 // fetches superintendent_interview responses directly from Firestore, assembles
@@ -1582,42 +1781,21 @@ app.post('/admin/generate-administrator-report', requireAdminJWT, async (req, re
     }
 
     // ── 6. Call Claude Sonnet ────────────────────────────────────────────────────
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-5',
-        max_tokens: 8192,
-        system: 'You are writing an institutional report on behalf of Clarity 360. Write in first-person institutional voice, as if Clarity 360 is the author delivering findings directly to the reader — for example: "Across our administrator interviews, the dominant theme was..." or "Our findings indicate...". Never write "Clarity 360 found that...", "According to Clarity 360...", or any phrase that treats Clarity 360 as an outside observer. Do not reference the interview process, the AI, or the tool itself. The report should read as authoritative synthesis authored by the organization.'
-          + ' Write a structured report with these sections: 1. Executive Summary, 2. Key Themes & Findings, 3. Areas of Strength, 4. Areas for Growth / Improvement, 5. Actionable Recommendations. Do not reference the interview format or AI.'
-          + untrustedDataRule('session') + noMarkupRule(),
-        messages: [{ role: 'user', content: prompt }],
-      }),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error('[admin/generate-administrator-report] Anthropic API returned HTTP', response.status, ':', JSON.stringify(data));
+    let reportText;
+    try {
+      reportText = await generateAdministratorReportText(prompt);
+    } catch (genErr) {
+      console.error('[admin/generate-administrator-report]', genErr.message);
       return res.status(502).json({ error: 'Report generation failed' });
     }
-    if (data.type === 'error') {
-      console.error('[admin/generate-administrator-report] Anthropic API error object:', JSON.stringify(data.error));
-      return res.status(502).json({ error: 'Report generation failed' });
-    }
-    if (!data.content?.[0]?.text) {
-      console.error('[admin/generate-administrator-report] Unexpected response structure (no content[0].text):', JSON.stringify(data).substring(0, 500));
-      return res.status(500).json({ error: 'Unexpected response from Claude API' });
-    }
 
-    console.log('[admin/generate-administrator-report] Success — report length:', data.content[0].text.length, 'chars');
+    console.log('[admin/generate-administrator-report] Success — report length:', reportText.length, 'chars');
 
-    // ── 7. Look up superintendent leads and email the report ─────────────────
-    const reportText = data.content[0].text;
+    // ── 7. Look up superintendent leads and email the (aggregate) report ─────
+    // NOTE: this re-emails the same aggregate report to every lead whose
+    // session falls in this batch, every time this route runs — including
+    // leads who already received their own individual report automatically
+    // via /interview/send-lead-report right after completing their interview.
     const reportedSessionIds = new Set(sessions.map(s => s.session_id));
 
     if (db && process.env.RESEND_API_KEY) {
@@ -1629,79 +1807,9 @@ app.post('/admin/generate-administrator-report', requireAdminJWT, async (req, re
 
         console.log('[admin/generate-administrator-report] Found', leads.length, 'leads to email');
 
-        const reportHtml = markdownToHtml(reportText);
-
         for (const lead of leads) {
-          const subject = headerText(`Your Clarity 360 Leadership Interview Report — ${lead.firstName} ${lead.lastName}`);
-          const emailHtml = `<!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"></head>
-<body style="margin:0;padding:0;background:#f8fafc;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;padding:40px 20px;">
-    <tr><td align="center">
-      <table width="620" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(99,102,241,0.10);">
-        <tr>
-          <td style="background:linear-gradient(135deg,#1e1b4b,#312e81);padding:36px 48px;">
-            <p style="margin:0 0 4px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:700;color:rgba(255,255,255,0.6);letter-spacing:0.12em;text-transform:uppercase;">Clarity 360</p>
-            <h1 style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:24px;font-weight:800;color:#ffffff;line-height:1.3">Your Leadership Interview Report</h1>
-          </td>
-        </tr>
-        <tr>
-          <td style="padding:36px 48px 24px;">
-            <p style="margin:0 0 20px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;color:#374151;line-height:1.7;">
-              Dear ${escapeHtml(lead.firstName)},
-            </p>
-            <p style="margin:0 0 28px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;color:#374151;line-height:1.7;">
-              Thank you for participating in the Clarity 360 Administrator Interview. Below is the synthesized report based on the responses gathered from your district&apos;s leadership listening tour.
-            </p>
-            <div style="background:#f8fafc;border-radius:12px;padding:32px 36px;border:1px solid #e0e7ff;margin-bottom:28px;">
-              ${reportHtml}
-            </div>
-            <div style="background:linear-gradient(135deg,rgba(220,38,38,0.06),rgba(185,28,28,0.04));border-radius:12px;padding:24px 28px;border:1.5px solid rgba(220,38,38,0.15);text-align:center;margin-bottom:24px;">
-              <p style="margin:0 0 16px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;font-weight:700;color:#1e1b4b;line-height:1.5;">
-                Ready to bring Clarity 360 to your district?<br>Schedule a conversation with our team.
-              </p>
-              <a href="https://clarity360hq.com/#schedule" style="display:inline-block;background:linear-gradient(135deg,#dc2626,#b91c1c);color:white;text-decoration:none;padding:14px 36px;border-radius:50px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;font-weight:800;box-shadow:0 4px 16px rgba(220,38,38,0.30);">
-                Schedule a Conversation →
-              </a>
-            </div>
-          </td>
-        </tr>
-        <tr>
-          <td style="background:#f8fafc;padding:20px 48px;border-top:1px solid #e0e7ff;">
-            <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#94a3b8;">
-              This report was generated by Clarity 360 · <a href="https://clarity360hq.com" style="color:#6366f1;text-decoration:none;">clarity360hq.com</a>
-            </p>
-          </td>
-        </tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`;
-
           try {
-            const emailRes = await fetch('https://api.resend.com/emails', {
-              method: 'POST',
-              headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                from: 'Clarity 360 <noreply@clarity360hq.com>',
-                to: [lead.email],
-                reply_to: 'knoell@engagingpd.com',
-                subject,
-                html: emailHtml,
-              }),
-            });
-            const emailData = await emailRes.json();
-            if (emailRes.ok) {
-              console.log('[admin/generate-administrator-report] Report emailed to', lead.email, '— Resend ID:', emailData.id);
-              // Update lead with reportSentAt
-              await db.collection('superintendent_leads').doc(lead.id).update({
-                reportSentAt: new Date().toISOString(),
-              });
-            } else {
-              console.error('[admin/generate-administrator-report] Resend error for', lead.email, ':', JSON.stringify(emailData));
-            }
+            await sendLeadReportEmail(lead, reportText);
           } catch (emailErr) {
             console.error('[admin/generate-administrator-report] Failed to send report email to', lead.email, ':', emailErr.message);
           }
@@ -1715,7 +1823,7 @@ app.post('/admin/generate-administrator-report', requireAdminJWT, async (req, re
     }
 
     // Return in the same shape as /admin/generate-report so the frontend can reuse the same handler
-    return res.json(data);
+    return res.json({ content: [{ text: reportText }] });
 
   } catch (e) {
     console.error('[admin/generate-administrator-report] Exception:', e.message);
