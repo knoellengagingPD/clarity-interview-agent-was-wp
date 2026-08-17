@@ -3604,7 +3604,15 @@ async function adminLoginRateLimit(req, res, next) {
     const ref = db.collection('rate_limits').doc(`admin_login_${docId}`);
     const now = Date.now();
 
-    const verdict = await db.runTransaction(async (txn) => {
+    // CIA-1-023: under contention (many attempts from the same IP in quick
+    // succession, e.g. repeated manual testing) Firestore's automatic
+    // transaction retries can stack up and leave this request hanging well
+    // past any reasonable login-page wait — observed hanging 20s+ with no
+    // response at all. A stuck rate-limit check must never be able to wedge
+    // the login form indefinitely, so bound it and fail fast (open, not
+    // closed — a timed-out rate-limit check is not evidence of abuse).
+    const RATE_LIMIT_TIMEOUT_MS = 4000;
+    const txnPromise = db.runTransaction(async (txn) => {
       const snap = await txn.get(ref);
       const data = snap.exists ? snap.data() : null;
       let count = data ? Number(data.count) || 0 : 0;
@@ -3627,6 +3635,20 @@ async function adminLoginRateLimit(req, res, next) {
       txn.set(ref, { count, windowStart });
       return { ok: true, count };
     });
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('rate_limit_timeout')), RATE_LIMIT_TIMEOUT_MS)
+    );
+
+    let verdict;
+    try {
+      verdict = await Promise.race([txnPromise, timeoutPromise]);
+    } catch (raceErr) {
+      if (raceErr.message === 'rate_limit_timeout') {
+        log.warn('Admin login rate limiter timed out — failing open', { ip });
+        return next();
+      }
+      throw raceErr;
+    }
 
     res.setHeader('X-RateLimit-Limit', ADMIN_LOGIN_MAX_ATTEMPTS);
     if (!verdict.ok) {
