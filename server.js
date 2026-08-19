@@ -401,6 +401,21 @@ const VALID_ROLES = new Set([
   'unknown',
 ]);
 
+// Derive a survey wave label ("Fall 2025" / "Spring 2026") from an ISO
+// timestamp so Fall-vs-Spring (and year-over-year) comparisons can group
+// responses without anyone having to manually tag a survey round. Convention:
+// Aug (8) through Dec (12) = Fall of that calendar year; Jan (1) through
+// Jul (7) = Spring of that calendar year. Applied at write time to every new
+// school_climate_* response (see /log_response) and backfilled onto older
+// documents via POST /admin/backfill-survey-cycles.
+function surveyCycleFor(tsString) {
+  const d = new Date(tsString);
+  if (isNaN(d.getTime())) return null;
+  const month = d.getUTCMonth() + 1; // 1–12
+  const year = d.getUTCFullYear();
+  return month >= 8 ? `Fall ${year}` : `Spring ${year}`;
+}
+
 function validateLogPayload(body) {
   const { section, question_id, role, school_id, rating, followup_text, text, client_id } = body || {};
 
@@ -831,6 +846,7 @@ app.post(
       if (req.body.domain) doc.domain = String(req.body.domain).slice(0, 32);
       if (req.body.token) doc.token = String(req.body.token).slice(0, 20);
       if (req.body.response_mode === 'text') doc.response_mode = 'text';
+      doc.survey_cycle = surveyCycleFor(doc.ts);
     }
 
     // Skip AI conversational turn records — these are server-side scaffolding,
@@ -4440,7 +4456,7 @@ app.post('/school-climate/send-deployment-email', requireAdminJWT, async (req, r
 app.get('/school-climate/sessions', requireAdminJWT, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
   try {
-    const { school_id, role, start_date, end_date, hide_test, show_archived } = req.query;
+    const { school_id, role, start_date, end_date, hide_test, show_archived, survey_cycle } = req.query;
     const shouldHideTest = hide_test === 'true';         // only hide test data when explicitly requested
     const shouldShowArchived = show_archived === 'true'; // default: hide archived
 
@@ -4449,7 +4465,7 @@ app.get('/school-climate/sessions', requireAdminJWT, async (req, res) => {
     }
 
     // Cache for 2 minutes — each call scans 4 full sections of the responses collection
-    const cacheKey = `sc_sessions:${JSON.stringify({ school_id, role, start_date, end_date, hide_test, show_archived })}`;
+    const cacheKey = `sc_sessions:${JSON.stringify({ school_id, role, start_date, end_date, hide_test, show_archived, survey_cycle })}`;
     const cached = cacheGet(cacheKey);
     if (cached) return res.json({ ...cached, cached: true });
 
@@ -4519,6 +4535,29 @@ app.get('/school-climate/sessions', requireAdminJWT, async (req, res) => {
       return true;
     });
 
+    // Resolve a doc's survey cycle: prefer the field written at submission time
+    // (see /log_response), fall back to deriving it from ts for older documents
+    // written before this field existed (covered by the one-time backfill at
+    // POST /admin/backfill-survey-cycles, but this keeps things correct even for
+    // any doc the backfill hasn't reached yet).
+    const cycleForDoc = (doc) => doc.survey_cycle || surveyCycleFor(doc.ts);
+
+    // Distinct cycles available for this school (independent of any survey_cycle
+    // filter below), sorted most-recent-first, so the dashboard can populate a
+    // cycle picker. Spring of a year precedes Fall of that same year.
+    const cycleSortKey = (label) => {
+      const m = /^(Spring|Fall) (\d{4})$/.exec(label || '');
+      if (!m) return -Infinity;
+      return Number(m[2]) * 2 + (m[1] === 'Fall' ? 1 : 0);
+    };
+    const availableCycles = [...new Set(filteredDocs.map(cycleForDoc).filter(Boolean))]
+      .sort((a, b) => cycleSortKey(b) - cycleSortKey(a));
+
+    // Optionally narrow to a single requested cycle for comparison views.
+    const cycleFilteredDocs = survey_cycle
+      ? filteredDocs.filter(doc => cycleForDoc(doc) === survey_cycle)
+      : filteredDocs;
+
     // Derive a rating's domain bucket. Prefer the domain already recorded on the
     // document (see doc.domain write in /log_response's school_climate_ branch,
     // where req.body.domain is stored verbatim). Fall back to a question_id
@@ -4547,7 +4586,7 @@ app.get('/school-climate/sessions', requireAdminJWT, async (req, res) => {
     // Aggregate by role (e.g. "teachers") → sessions + running score totals
     const byRole = {};
 
-    for (const doc of filteredDocs) {
+    for (const doc of cycleFilteredDocs) {
       const docRole = (doc.section || '').replace('school_climate_', '') || 'unknown';
 
       if (!byRole[docRole]) {
@@ -4641,6 +4680,8 @@ app.get('/school-climate/sessions', requireAdminJWT, async (req, res) => {
     const result = {
       school_id,
       roles_queried: sectionsToQuery.map(s => s.replace('school_climate_', '')),
+      survey_cycle: survey_cycle || null,
+      available_cycles: availableCycles,
       data,
     };
     cacheSet(cacheKey, result, CACHE_TTL_SESSIONS);
@@ -4648,6 +4689,49 @@ app.get('/school-climate/sessions', requireAdminJWT, async (req, res) => {
   } catch (e) {
     log.error('Climate sessions fetch failed', { error: e.message });
     return res.status(500).json({ error: 'Failed to fetch school climate sessions' });
+  }
+});
+
+// ─── School Climate: One-time survey_cycle backfill ──────────────────────────
+// POST /admin/backfill-survey-cycles
+// One-time (safe to re-run) migration: sets survey_cycle on every existing
+// school_climate_* response document that doesn't already have it, derived
+// from that document's ts via surveyCycleFor(). New responses get this field
+// at write time already (see /log_response) — this only needs to run once to
+// cover data collected before that change shipped. Re-running is a no-op for
+// documents that already have survey_cycle set.
+app.post('/admin/backfill-survey-cycles', requireAdminJWT, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
+  try {
+    const snap = await db.collection('responses').get();
+    const toUpdate = snap.docs.filter(d => {
+      const data = d.data();
+      return typeof data.section === 'string' &&
+        data.section.startsWith('school_climate_') &&
+        !data.survey_cycle &&
+        data.ts;
+    });
+
+    let updated = 0;
+    let skippedNoTs = 0;
+    const BATCH_SIZE = 450; // stay under Firestore's 500-op batch limit
+    for (let i = 0; i < toUpdate.length; i += BATCH_SIZE) {
+      const chunk = toUpdate.slice(i, i + BATCH_SIZE);
+      const batch = db.batch();
+      for (const doc of chunk) {
+        const cycle = surveyCycleFor(doc.data().ts);
+        if (!cycle) { skippedNoTs++; continue; }
+        batch.update(doc.ref, { survey_cycle: cycle });
+        updated++;
+      }
+      await batch.commit();
+    }
+
+    log.info('Backfilled survey_cycle on existing responses', { updated, skippedNoTs, scanned: snap.size });
+    return res.json({ status: 'ok', scanned: snap.size, updated, skippedNoTs });
+  } catch (e) {
+    log.error('survey_cycle backfill failed', { error: e.message });
+    return res.status(500).json({ error: 'Backfill failed' });
   }
 });
 
