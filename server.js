@@ -216,8 +216,10 @@ const CLIMATE_QUESTIONS = {
     { n: 12, text: 'My teachers give me feedback that helps me get better.',                             open: false },
     { n: 13, text: 'Students have opportunities to participate in activities at this school.',           open: false },
     { n: 14, text: 'This school has the resources and materials I need to learn.',                       open: false },
-    { n: 15, text: 'If you could change one or two things to make school better for everyone, what would they be?', open: true },
-    { n: 16, text: 'What is one thing about your school that you really love and never want to change?', open: true },
+    { n: 15, text: 'How well does your school help you understand how to use AI tools, like ChatGPT, the right way for schoolwork?', open: false },
+    { n: 16, text: 'If you could change one or two things to make school better for everyone, what would they be?', open: true },
+    { n: 17, text: 'What is one thing about your school that you really love and never want to change?', open: true },
+    { n: 18, text: 'Where do you think AI could help you with schoolwork or learning — and where does it worry you or cause problems?', open: true },
   ],
   teachers: [
     { n: 1,  text: 'I feel safe at this school.',                                                        open: false },
@@ -258,8 +260,10 @@ const CLIMATE_QUESTIONS = {
     { n: 13, text: 'The school building and grounds are clean and well maintained.',                     open: false },
     { n: 14, text: 'I have the materials and supplies I need to perform my job effectively.',            open: false },
     { n: 15, text: 'Overall this school provides a positive environment for students and staff.',        open: false },
-    { n: 16, text: 'If funding were not a barrier, what one or two changes would most improve the experience of staff and students at this school?', open: true },
-    { n: 17, text: 'What is one thing about working at this school that you value most and never want to change?', open: true },
+    { n: 16, text: 'How prepared do you feel your school is to use AI tools thoughtfully to support day-to-day school operations, like communication, scheduling, or administrative tasks?', open: false },
+    { n: 17, text: 'If funding were not a barrier, what one or two changes would most improve the experience of staff and students at this school?', open: true },
+    { n: 18, text: 'What is one thing about working at this school that you value most and never want to change?', open: true },
+    { n: 19, text: 'Where do you think AI could be most helpful in how your school operates — and where do you have concerns about it being used?', open: true },
   ],
   parents: [
     { n: 1,  text: 'My child feels safe at school.',                                                     open: false },
@@ -277,8 +281,10 @@ const CLIMATE_QUESTIONS = {
     { n: 13, text: 'My child has access to the resources needed to succeed at school.',                  open: false },
     { n: 14, text: 'Teachers give my child feedback that helps them learn.',                             open: false },
     { n: 15, text: 'This school is a welcoming place for students of all backgrounds.',                  open: false },
-    { n: 16, text: 'If funding were not a barrier, what one or two changes would most improve your child\'s experience at this school?', open: true },
-    { n: 17, text: 'What is one thing this school does really well for students and families that you never want to change?', open: true },
+    { n: 16, text: 'How prepared do you feel your child\'s school is to use AI tools thoughtfully and responsibly in your child\'s education?', open: false },
+    { n: 17, text: 'If funding were not a barrier, what one or two changes would most improve your child\'s experience at this school?', open: true },
+    { n: 18, text: 'What is one thing this school does really well for students and families that you never want to change?', open: true },
+    { n: 19, text: 'Where do you see AI potentially helping your child\'s education — and where do you have concerns about how it\'s being used?', open: true },
   ],
 };
 
@@ -5809,8 +5815,10 @@ app.post('/api/generate-quantitative-report', requireAdminJWT, async (req, res) 
         E5: 'My teachers give me feedback that helps me get better.',
         E6: 'Students have opportunities to participate in activities at this school.',
         EN1: 'This school has the resources and materials I need to learn.',
+        AIR1: 'How well does your school help you understand how to use AI tools, like ChatGPT, the right way for schoolwork?',
         DB1: 'If you could change one or two things to make school better for everyone, what would they be?',
         DB2: 'What is one thing about your school that you really love and never want to change?',
+        DB3: 'Where do you think AI could help you with schoolwork or learning — and where does it worry you or cause problems?',
       },
       teachers: {
         S1: 'I feel safe at this school.',
@@ -5851,8 +5859,10 @@ app.post('/api/generate-quantitative-report', requireAdminJWT, async (req, res) 
         EN1: 'The school building and grounds are clean and well maintained.',
         EN2: 'I have the materials and supplies I need to perform my job effectively.',
         EN3: 'Overall this school provides a positive environment for students and staff.',
+        AIR1: 'How prepared do you feel your school is to use AI tools thoughtfully to support day-to-day school operations, like communication, scheduling, or administrative tasks?',
         DB1: 'If funding were not a barrier, what one or two changes would most improve the experience of staff and students at this school?',
         DB2: 'What is one thing about working at this school that you value most and never want to change?',
+        DB3: 'Where do you think AI could be most helpful in how your school operates — and where do you have concerns about it being used?',
       },
       parents: {
         S1: 'My child feels safe at school.',
@@ -5870,8 +5880,10 @@ app.post('/api/generate-quantitative-report', requireAdminJWT, async (req, res) 
         EN1: 'My child has access to the resources needed to succeed at school.',
         EN2: 'Teachers give my child feedback that helps them learn.',
         EN3: 'This school is a welcoming place for students of all backgrounds.',
+        AIR1: 'How prepared do you feel your child\'s school is to use AI tools thoughtfully and responsibly in your child\'s education?',
         DB1: 'If funding were not a barrier, what one or two changes would most improve your child\'s experience at this school?',
         DB2: 'What is one thing this school does really well for students and families that you never want to change?',
+        DB3: 'Where do you see AI potentially helping your child\'s education — and where do you have concerns about how it\'s being used?',
       },
     };
 
