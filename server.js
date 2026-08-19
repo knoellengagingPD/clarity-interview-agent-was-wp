@@ -604,9 +604,11 @@ const corsOptions = {
   origin: function(origin, callback) {
     const allowed = [
       'https://clarity-voice-ui-workplace.vercel.app',
+      'https://clarity-interview-agent-was-wp.vercel.app',
       'https://www.clarity360hq.com',
       'https://administrators.clarity360hq.com',
       'https://schoolclimate.clarity360hq.com',
+      'https://admin.clarity360hq.com',
       'https://clarity360hq.com',
       'https://engagingpurpose.com',
       'https://www.engagingpurpose.com',
