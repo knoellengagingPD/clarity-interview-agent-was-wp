@@ -17,7 +17,7 @@ import crypto from 'crypto';
 import admin from 'firebase-admin';
 import Stripe from 'stripe';
 import PDFDocument from 'pdfkit';
-import { writeSessionToSupabase } from './lib/writeToSupabase.js';
+import { writeSessionToSupabase, writeWorkplaceSessionToSupabase } from './lib/writeToSupabase.js';
 
 // ─── Structured Logger ────────────────────────────────────────────────────────
 async function shipLog(level, msg, meta = {}) {
@@ -960,6 +960,65 @@ app.post('/school-climate/session-complete', requireAccessKey, async (req, res) 
     res.status(202).json({ status: 'accepted' });
   } catch (err) {
     console.error('[school-climate/session-complete] Supabase write failed:', err);
+    res.status(202).json({ status: 'accepted' });
+  }
+});
+
+// ─── Workplace: Session Complete ──────────────────────────────────────────────
+// POST /workplace/session-complete
+// Mirrors /school-climate/session-complete but writes to the isolated Workplace
+// Supabase tables (workplace_sessions / workplace_rated_responses /
+// workplace_dream_big_responses) via writeWorkplaceSessionToSupabase, keeping
+// Workplace rows out of the school-climate tables entirely.
+function validateWorkplaceSessionCompletePayload(body) {
+  const { session_id, deployment_id, organization_id, role, rated_responses, dream_big_responses } = body || {};
+
+  if (typeof session_id !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(session_id))
+    return 'Invalid or missing session_id';
+  if (typeof organization_id !== 'string' || !organization_id || organization_id.length > 128)
+    return 'Invalid or missing organization_id';
+  if (role !== 'staff')
+    return 'Invalid or missing role';
+  if (deployment_id != null && (typeof deployment_id !== 'string' || deployment_id.length > 160))
+    return 'Invalid deployment_id';
+  if (rated_responses != null && (!Array.isArray(rated_responses) || rated_responses.length > 40))
+    return 'rated_responses must be an array of at most 40 items';
+  if (dream_big_responses != null && (!Array.isArray(dream_big_responses) || dream_big_responses.length > 40))
+    return 'dream_big_responses must be an array of at most 40 items';
+
+  return null; // valid
+}
+
+app.post('/workplace/session-complete', requireAccessKey, async (req, res) => {
+  const {
+    session_id, deployment_id, organization_id, role,
+    response_mode, token, is_test, started_at, completed_at,
+    rated_responses, dream_big_responses
+  } = req.body || {};
+
+  const validationError = validateWorkplaceSessionCompletePayload(req.body);
+  if (validationError) {
+    log.warn('workplace session-complete payload rejected', { reason: validationError });
+    return res.status(400).json({ error: validationError });
+  }
+
+  try {
+    await writeWorkplaceSessionToSupabase({
+      sessionId: session_id,
+      deploymentId: deployment_id || `${organization_id}-unknown`,
+      organizationId: organization_id,
+      role,
+      responseMode: response_mode || 'voice',
+      token: token || null,
+      isTest: is_test || false,
+      startedAt: started_at || null,
+      completedAt: completed_at || new Date().toISOString(),
+      ratedResponses: rated_responses || [],
+      dreamBigResponses: dream_big_responses || []
+    });
+    res.status(202).json({ status: 'accepted' });
+  } catch (err) {
+    console.error('[workplace/session-complete] Supabase write failed:', err);
     res.status(202).json({ status: 'accepted' });
   }
 });
