@@ -5455,6 +5455,110 @@ app.get('/workplace/validate-token/:token', async (req, res) => {
   }
 });
 
+// ─── Workplace Climate: Flag Session (crisis alert) ───────────────────────────
+// POST /workplace/flag-session
+// Mirrors /school-climate/flag-session for the Workplace product. Called by the
+// frontend when crisis keywords are detected in the participant's transcript.
+// Does NOT receive any transcript content — only session metadata. Stores
+// crisis_flag: true in Firestore and fires a Resend alert email.
+// Intentionally unauthenticated (no CLARITY_KEY required) so it can be called
+// from the participant-facing page without exposing the admin key to the client;
+// bounded instead by rate limiting and a verified token binding, same as the
+// school-climate route.
+const WP_CRISIS_SESSION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const WP_CRISIS_TOKEN_RE      = /^WRK-[A-Z0-9]{6}$/;
+
+app.post('/workplace/flag-session',
+  rateLimit({ windowMs: 60_000, max: 3, bucket: 'wp-crisis-flag' }),
+  async (req, res) => {
+  const { session_id, token } = req.body || {};
+
+  if (typeof session_id !== 'string' || typeof token !== 'string') {
+    return res.status(400).json({ error: 'session_id and token are required' });
+  }
+  const normalizedToken = token.trim().toUpperCase();
+  if (!WP_CRISIS_SESSION_ID_RE.test(session_id) || !WP_CRISIS_TOKEN_RE.test(normalizedToken)) {
+    return res.status(400).json({ error: 'session_id and token are required' });
+  }
+
+  if (!admin.apps.length) {
+    log.error('Workplace crisis flag rejected: Firestore unavailable, flag cannot be bound');
+    return res.status(503).json({ error: 'Crisis flag service unavailable' });
+  }
+
+  let tokenData;
+  try {
+    const tokenSnap = await admin.firestore().collection('workplace_tokens').doc(normalizedToken).get();
+    if (!tokenSnap.exists) {
+      log.warn('Workplace crisis flag rejected: token not issued', { tokenPrefix: normalizedToken.slice(0, 6) });
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+    tokenData = tokenSnap.data() || {};
+  } catch (e) {
+    log.error('Workplace crisis flag token lookup failed', { error: e.message });
+    return res.status(503).json({ error: 'Crisis flag service unavailable' });
+  }
+
+  const organization_id   = tokenData.organizationId   || 'unknown';
+  const organization_name = tokenData.organizationName || 'unknown';
+
+  let alreadyFlagged = false;
+  try {
+    await admin.firestore().collection('crisis_flags').doc(`crisis_wp_${session_id}`).create({
+      session_id,
+      token: normalizedToken,
+      product: 'workplace',
+      organization_id,
+      organization_name,
+      department:      tokenData.department || '',
+      token_status:     tokenData.active === false ? 'inactive' : 'active',
+      is_test:          tokenData.is_test === true,
+      crisis_flag:      true,
+      flaggedAt:        new Date().toISOString(),
+    });
+    console.log('[workplace/flag-session] Crisis flag written for session', session_id, 'at org', organization_name);
+  } catch (e) {
+    if (e.code === 6) {
+      alreadyFlagged = true;
+      log.info('Workplace crisis flag already recorded for session, skipping duplicate alert', { session_id });
+    } else {
+      console.error('[workplace/flag-session] Firestore write failed:', e.message);
+    }
+  }
+
+  if (!alreadyFlagged && process.env.RESEND_API_KEY) {
+    try {
+      const emailRes = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from:    'Clarity 360 <noreply@clarity360hq.com>',
+          to:      ['knoell@engagingpd.com'],
+          subject: 'Clarity 360 — Crisis Language Detected (Workplace)',
+          html: `<p>A session at <strong>${escapeHtml(organization_name || 'unknown organization')}</strong> was flagged for potential crisis language during a Workplace Interview.</p>
+<p>The participant was immediately provided the 988 Suicide and Crisis Lifeline resource during the interview.</p>
+<p>No identifying information or transcript content is available.</p>
+<p>Please notify the organization contact so they can activate their crisis protocols.</p>
+<hr>
+<p style="color:#888;font-size:12px;">Session token: ${escapeHtml(normalizedToken)} &nbsp;|&nbsp; Organization ID: ${escapeHtml(organization_id)}</p>`,
+        }),
+      });
+      const emailData = await emailRes.json();
+      if (emailRes.ok) {
+        console.log('[workplace/flag-session] Alert email sent — Resend ID:', emailData.id);
+      } else {
+        console.error('[workplace/flag-session] Resend error:', JSON.stringify(emailData));
+      }
+    } catch (e) {
+      console.error('[workplace/flag-session] Email send failed:', e.message);
+    }
+  } else if (!alreadyFlagged) {
+    console.warn('[workplace/flag-session] RESEND_API_KEY not set — skipping alert email');
+  }
+
+  return res.json({ status: 'ok', flagged: true });
+});
+
 // ─── Workplace Climate: Create Token ──────────────────────────────────────────
 // POST /workplace/tokens
 // Requires an admin JWT (WIA-1-004 PR C). Body: { organization_name, organization_id, department, is_test }.
@@ -5604,16 +5708,27 @@ app.get('/workplace/stats', requireAdminJWT, async (req, res) => {
       if (doc.response_mode === 'text') sessions[sid].response_mode = 'text';
 
       const qid = doc.question_id ? String(doc.question_id) : '';
-      const ratingLabel = doc.rating != null ? String(doc.rating).trim().toLowerCase() : '';
-      // CIA-1-021 read tolerance. Documents written before the validation added to
-      // /workplace/log_response may still hold a reserved object key, so the two map
-      // lookups here are own-property checks rather than plain bracket reads. A plain
-      // read reaches the prototype: WP_SCALE_MAP['constructor'] is a function, which
-      // passes the `!= null` test below and turns questionTotals[qid] into a
-      // concatenated string, rendering that question average and the whole domain
-      // average NaN from a single stored document.
-      const numeric = Object.hasOwn(WP_SCALE_MAP, ratingLabel) ? WP_SCALE_MAP[ratingLabel] : undefined;
-      if (qid && !RESERVED_OBJECT_KEYS.has(qid) && numeric != null) {
+      // The live client (workplace/interview/page.tsx) always posts a numeric score,
+      // not a text label — WP_SCALE_MAP was being checked against that number's
+      // lowercased string form, which never matches a WP_SCALE_MAP key, so every
+      // real rating was silently dropped from question/domain averages. Numeric
+      // ratings are read directly; WP_SCALE_MAP is kept only as a fallback for any
+      // legacy/alternate writer that might still post a text label.
+      // CIA-1-021 read tolerance retained: the string fallback is an own-property
+      // check, not a plain bracket read, so a reserved key like "constructor" can't
+      // reach the prototype and turn an average into a concatenated string.
+      let numeric;
+      if (typeof doc.rating === 'number' && Number.isFinite(doc.rating)) {
+        numeric = doc.rating;
+      } else if (typeof doc.rating === 'string') {
+        const ratingLabel = doc.rating.trim().toLowerCase();
+        if (Object.hasOwn(WP_SCALE_MAP, ratingLabel)) numeric = WP_SCALE_MAP[ratingLabel];
+      }
+      // Only aggregate ids that are actually rated scale questions — this excludes
+      // turn_N transcript-log rows and DB1-3 (open, always logged with rating: 0),
+      // both of which would otherwise pollute averages with spurious 0 values.
+      const isRatedQuestion = Object.hasOwn(WP_DOMAIN_MAP, qid) && WP_DOMAIN_MAP[qid] !== 'dream_big';
+      if (qid && !RESERVED_OBJECT_KEYS.has(qid) && isRatedQuestion && numeric != null) {
         sessions[sid].ratings[qid] = numeric;
         questionTotals[qid] = (questionTotals[qid] || 0) + numeric;
         questionCounts[qid] = (questionCounts[qid] || 0) + 1;
