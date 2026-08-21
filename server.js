@@ -4369,6 +4369,72 @@ app.post('/school-climate/tokens', requireAdminJWT, async (req, res) => {
   }
 });
 
+// ─── School Climate: List Existing Tokens ─────────────────────────────────────
+// GET /school-climate/tokens?school_id=X
+// Admin-authenticated. Returns the newest ACTIVE token per role for a district,
+// so the dashboard can show previously generated links when a district name is
+// re-entered instead of only ever showing tokens generated in the current
+// browser session (climate_tokens keeps every token ever created — generating
+// a token for a role that already has one does not overwrite or list the old
+// one, it only adds a new active document — so "newest per role" is what a
+// participant-facing link should resolve to).
+app.get('/school-climate/tokens', requireAdminJWT, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
+  try {
+    const schoolId = String(req.query.school_id || '').trim();
+    if (!schoolId) return res.status(400).json({ error: 'school_id query param is required' });
+
+    // Single-field where (school_id only) to avoid needing a composite Firestore
+    // index — the status filter is applied in memory below instead.
+    const snap = await db.collection('climate_tokens')
+      .where('school_id', '==', schoolId)
+      .get();
+
+    const newestByRole = {};
+    snap.docs.forEach(d => {
+      const data = d.data() || {};
+      const role = data.role;
+      if (!role || data.status !== 'active') return;
+      const createdAt = data.created_at || '';
+      if (!newestByRole[role] || createdAt > newestByRole[role].created_at) {
+        newestByRole[role] = { token: data.token, created_at: createdAt, is_test: data.is_test === true };
+      }
+    });
+
+    const tokens = {};
+    for (const role of Object.keys(newestByRole)) tokens[role] = newestByRole[role].token;
+
+    return res.json({ status: 'ok', school_id: schoolId, tokens });
+  } catch (e) {
+    log.error('Climate token list failed', { error: e.message });
+    return res.status(500).json({ error: 'Failed to list tokens' });
+  }
+});
+
+// ─── School Climate: Delete Tokens by School ID ───────────────────────────────
+// DELETE /school-climate/tokens/:school_id
+// Admin-authenticated. Hard-deletes every climate_tokens doc for the given
+// school_id — for cleaning up bogus/garbage entries (e.g. a school_id that was
+// never a real district) rather than a routine per-token revoke action.
+app.delete('/school-climate/tokens/:school_id', requireAdminJWT, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
+  try {
+    const schoolId = req.params.school_id;
+    const snap = await db.collection('climate_tokens').where('school_id', '==', schoolId).get();
+    if (snap.empty) return res.json({ status: 'ok', deleted: 0 });
+
+    const batch = db.batch();
+    snap.docs.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+
+    log.info('Climate tokens deleted', { school_id: schoolId, count: snap.docs.length });
+    return res.json({ status: 'ok', deleted: snap.docs.length });
+  } catch (e) {
+    log.error('Climate token deletion failed', { error: e.message });
+    return res.status(500).json({ error: 'Failed to delete tokens' });
+  }
+});
+
 // ─── School Climate: Send Deployment Email ────────────────────────────────────
 // POST /school-climate/send-deployment-email
 // Sends a role-specific survey invitation email to a recipient. Includes the
