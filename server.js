@@ -4745,6 +4745,13 @@ app.get('/school-climate/sessions', requireAdminJWT, async (req, res) => {
           district: doc.district || null,
           ts: doc.ts,
           ratings: {},
+          // Per-question verbatim follow-up text and Dream Big answers, keyed
+          // by question_id. Needed for the per-respondent CSV export — the
+          // aggregate open_responses array below is pooled across the whole
+          // role and can't be attributed back to an individual session.
+          followups: {},
+          dream_big: {},
+          survey_cycle: cycleForDoc(doc),
           response_mode: null,
         };
       }
@@ -4764,6 +4771,9 @@ app.get('/school-climate/sessions', requireAdminJWT, async (req, res) => {
         const rating = Number(doc.rating);
         if (!isNaN(rating) && rating !== 0) {
           rd.sessions[sid].ratings[qid] = rating;
+          if (doc.followup_text && doc.followup_text.trim() && doc.followup_text.trim() !== '[skipped]') {
+            rd.sessions[sid].followups[qid] = doc.followup_text.trim();
+          }
 
           rd.question_totals[qid] = (rd.question_totals[qid] || 0) + rating;
           rd.question_counts[qid] = (rd.question_counts[qid] || 0) + 1;
@@ -4780,6 +4790,11 @@ app.get('/school-climate/sessions', requireAdminJWT, async (req, res) => {
       if ((doc.domain === 'dream_big' || doc.domain === 'open') && doc.followup_text &&
           doc.followup_text.trim() && doc.followup_text.trim() !== '[skipped]') {
         rd.open_responses.push(doc.followup_text.trim());
+        // Also attribute it to its own session so the CSV export can emit one
+        // row per respondent rather than a pooled list.
+        if (qidRaw && !isTurnScaffold) {
+          rd.sessions[sid].dream_big[qidRaw] = doc.followup_text.trim();
+        }
       }
     }
 
