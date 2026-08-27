@@ -18,6 +18,7 @@ import admin from 'firebase-admin';
 import Stripe from 'stripe';
 import PDFDocument from 'pdfkit';
 import { writeSessionToSupabase, writeWorkplaceSessionToSupabase } from './lib/writeToSupabase.js';
+import { scrubPII } from './lib/scrubPII.js';
 
 // ─── Structured Logger ────────────────────────────────────────────────────────
 async function shipLog(level, msg, meta = {}) {
@@ -844,18 +845,18 @@ app.post(
 
     if (section === 'edscls_safety') {
       doc.rating = rating;
-      doc.followup_text = followup_text || '';
+      doc.followup_text = scrubPII(followup_text || '');
     } else if (section === 'dream_big') {
       doc.text = text || '';
     } else if (section === 'superintendent_interview') {
-      doc.followup_text = followup_text || '';
+      doc.followup_text = scrubPII(followup_text || '');
       if (rating !== undefined) doc.rating = rating;
     } else if (section === 'find_my_purpose' || section === 'find_my_purpose_s2') {
-      doc.followup_text = followup_text || '';
+      doc.followup_text = scrubPII(followup_text || '');
       if (client_id) doc.client_id = client_id;
     } else if (section.startsWith('school_climate_')) {
       doc.rating = rating;
-      doc.followup_text = followup_text || '';
+      doc.followup_text = scrubPII(followup_text || '');
       if (req.body.school_name) doc.school_name = String(req.body.school_name).trim();
       if (req.body.district) doc.district = String(req.body.district).trim();
       if (req.body.domain) doc.domain = String(req.body.domain).slice(0, 32);
