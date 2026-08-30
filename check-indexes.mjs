@@ -8,8 +8,17 @@
  *
  * That is a better test than the console, because the console reports on the
  * index and this reports on the query. Those are the same thing right up until
- * they are not: a typo in a field name yields a perfectly Enabled index that no
- * query will ever use.
+ * they are not.
+ *
+ * BUT ONLY IF THE QUERIES MATCH PRODUCTION. On 2026-08-30 this file reported
+ * 7/7 READY while /admin/sessions was failing in production, because the checks
+ * here included an .orderBy('ts_at') that the real query did not — and a range
+ * filter WITHOUT an ordering needs an ASCENDING index where the deployed one is
+ * DESCENDING. The index was genuinely Enabled. The query still could not run.
+ *
+ * So every check below must be a copy of a real call site, not a plausible
+ * approximation of one. A verification that does not mirror the real query is
+ * not a verification; it is a second opinion from the same mistake.
  *
  * READ ONLY.
  *
@@ -43,10 +52,22 @@ admin.initializeApp({
 const db = admin.firestore();
 
 const checks = [
-  ['responses  section + ts_at', () =>
+  // Mirrors GET /admin/sessions exactly: equality on section, range on ts_at,
+  // ordered desc. All three parts matter to which index is required.
+  ['/admin/sessions  section + ts_at range + order', () =>
     db.collection('responses')
       .where('section', '==', 'school_climate_teachers')
+      .where('ts_at', '>=', admin.firestore.Timestamp.fromDate(new Date('2026-08-01')))
+      .where('ts_at', '<', admin.firestore.Timestamp.fromDate(new Date('2026-09-01')))
       .orderBy('ts_at', 'desc').limit(1).get()],
+
+  // The same shape with NO ordering — the form that failed in production.
+  // Kept so that if a call site ever drops its orderBy, this says so.
+  ['responses  section + ts_at range, NO order', () =>
+    db.collection('responses')
+      .where('section', '==', 'school_climate_teachers')
+      .where('ts_at', '>=', admin.firestore.Timestamp.fromDate(new Date('2026-08-01')))
+      .limit(1).get()],
 
   ['responses  section + school_id + ts_at', () =>
     db.collection('responses')

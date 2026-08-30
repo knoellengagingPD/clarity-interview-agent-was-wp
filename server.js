@@ -1224,6 +1224,20 @@ app.get('/admin/sessions', requireAdminJWT, async (req, res) => {
       query = query.where('ts_at', '<', admin.firestore.Timestamp.fromDate(e));
     }
 
+    // The orderBy is REQUIRED, not cosmetic.
+    //
+    // A range filter with no ordering makes Firestore want an ASCENDING index on
+    // ts_at; the deployed index is DESCENDING, to serve newest-first. Without
+    // this line the query fails with FAILED_PRECONDITION even though the index
+    // exists and reads Enabled in the console.
+    //
+    // I shipped exactly that bug on 2026-08-30, and the index checker missed it
+    // because the checker's queries included an orderBy that the production
+    // query did not. A verification that does not mirror the real call is not a
+    // verification. It also gives the dashboard deterministic newest-first
+    // ordering, which it previously relied on document order for.
+    if (start || end) query = query.orderBy('ts_at', 'desc');
+
     const snapshot = await query.get();
     const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
     const sessionMap = {};
