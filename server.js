@@ -884,6 +884,31 @@ app.post(
       if (req.body.token) doc.token = String(req.body.token).slice(0, 20);
       if (req.body.response_mode === 'text') doc.response_mode = 'text';
       doc.survey_cycle = surveyCycleFor(doc.ts);
+
+      // Analysis fields, added 2026-08-30. This document is built from an
+      // explicit field list, so anything the client sends that is not named here
+      // is silently discarded — which is exactly what would have happened to all
+      // of these. Each one exists so a stored row can be interpreted without the
+      // frontend source that produced it.
+      //
+      // item_version is the important one. Three items were reworded from
+      // negative to positive today; students S7 was "Students at this school are
+      // bullied" and is now "Bullying is rare at this school". Same question_id,
+      // opposite meaning. Without a wording fingerprint on the row, any analysis
+      // spanning the change averages a value together with its own inverse and
+      // nothing anywhere reveals it.
+      if (req.body.question_type === 'open' || req.body.question_type === 'rated') {
+        doc.question_type = req.body.question_type;
+      }
+      if (req.body.item_version) doc.item_version = String(req.body.item_version).slice(0, 16);
+      if (req.body.question_text) doc.question_text = String(req.body.question_text).slice(0, 500);
+      if (['click', 'voice', 'text'].includes(req.body.input_method)) {
+        doc.input_method = req.body.input_method;
+      }
+      if (Array.isArray(req.body.scale_labels)) {
+        doc.scale_labels = req.body.scale_labels.slice(0, 8).map(l => String(l).slice(0, 64));
+      }
+      if (Number.isInteger(req.body.scale_max)) doc.scale_max = req.body.scale_max;
     }
 
     // Skip AI conversational turn records — these are server-side scaffolding,
@@ -916,7 +941,30 @@ app.post(
     }
 
     try {
-      await targetDb.collection('responses').add(doc);
+      // IDEMPOTENT WRITES FOR CLIMATE RESPONSES.
+      //
+      // .add() mints a random id, so the same answer written twice becomes two
+      // documents. That is not hypothetical: the survey pages hold a retry queue
+      // for failed writes, and the classic failure it exists for — request sent,
+      // Firestore commits, response lost on the way back — retries a write that
+      // already succeeded. The result is one participant's answer counted twice
+      // in every average, with nothing in the data to reveal it.
+      //
+      // A participant answers a given question once per session, so
+      // "<session>__<question>" is the natural key. set() then makes a retry a
+      // no-op rewrite instead of a duplicate, and a genuine re-answer correctly
+      // replaces the earlier value rather than sitting alongside it.
+      //
+      // Scoped to school_climate_* deliberately. FMP stores its whole transcript
+      // as turn_N documents with different semantics, and /fmp/admin/sessions
+      // reads every one of them; giving those deterministic ids is a separate
+      // question with its own risks.
+      if (section.startsWith('school_climate_')) {
+        const key = `${doc.session_id}__${doc.question_id}`.replace(/\//g, '_').slice(0, 400);
+        await targetDb.collection('responses').doc(key).set(doc);
+      } else {
+        await targetDb.collection('responses').add(doc);
+      }
       log.info('Response logged', { section, question_id, school_id: doc.school_id, client_id: doc.client_id });
 
       // If FMP and this is a new session turn, update client usage counter
