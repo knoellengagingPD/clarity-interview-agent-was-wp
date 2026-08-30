@@ -909,6 +909,19 @@ app.post(
         doc.scale_labels = req.body.scale_labels.slice(0, 8).map(l => String(l).slice(0, 64));
       }
       if (Number.isInteger(req.body.scale_max)) doc.scale_max = req.body.scale_max;
+
+      // A real Timestamp alongside the ISO string, NOT replacing it.
+      //
+      // Replacing it would be the obvious move and the wrong one: Firestore
+      // omits documents that lack an indexed field, so every query filtering on
+      // a new date field would silently drop all historical data — a worse
+      // failure than the one being fixed, and an invisible one.
+      //
+      // So ts stays authoritative and keeps driving the indexes (ISO-8601 sorts
+      // correctly as a string, so range queries are exact). ts_at accumulates
+      // for date arithmetic and for BigQuery, which types a string as a string.
+      // Once a backfill has reached every old document, the indexes can move.
+      doc.ts_at = admin.firestore.Timestamp.now();
     }
 
     // Skip AI conversational turn records — these are server-side scaffolding,
@@ -1038,6 +1051,70 @@ app.post('/school-climate/session-complete', requireAccessKey, async (req, res) 
   } catch (err) {
     console.error('[school-climate/session-complete] Supabase write failed:', err);
     res.status(202).json({ status: 'accepted' });
+  }
+
+  // ── Session summary document ────────────────────────────────────────────────
+  //
+  // Everything session-level — duration, completion, how many statements were
+  // actually captured — was previously derived by fetching every response row
+  // and grouping them at read time. That makes the commonest analytical question
+  // ("how are these interviews performing?") the most expensive one, and it gets
+  // linearly slower forever.
+  //
+  // Computed from FIRESTORE rather than from the client's payload. The client
+  // has every reason to be truthful and no reason to be accurate: it reports
+  // what it believes it sent, whereas this counts what actually landed. Where
+  // those two disagree, the difference IS the bug worth knowing about — most of
+  // this week was spent discovering such gaps one CSV at a time.
+  //
+  // Written after the response is sent, so a failure here can never cost a
+  // participant their interview.
+  try {
+    if (db && session_id) {
+      const snap = await db.collection('responses').where('session_id', '==', session_id).get();
+      const rows = snap.docs.map(d => d.data()).filter(r => String(r.section || '').startsWith('school_climate_'));
+
+      const rated = rows.filter(r => r.question_type !== 'open');
+      const byMethod = rows.reduce((acc, r) => {
+        const m = r.input_method || 'unknown';
+        acc[m] = (acc[m] || 0) + 1;
+        return acc;
+      }, {});
+
+      const start = started_at ? Date.parse(started_at) : null;
+      const end = Date.parse(completed_at || new Date().toISOString());
+
+      await db.collection('climate_sessions').doc(String(session_id)).set({
+        session_id,
+        school_id: school_id || 'unknown',
+        role: role || 'unknown',
+        token: token || null,
+        deployment_id: deployment_id || null,
+        response_mode: response_mode || 'voice',
+        is_test: !!is_test,
+        started_at: started_at || null,
+        completed_at: completed_at || new Date().toISOString(),
+        duration_seconds: start && end ? Math.max(0, Math.round((end - start) / 1000)) : null,
+        survey_cycle: surveyCycleFor(completed_at || new Date().toISOString()),
+
+        // What actually reached Firestore, not what the client believed it sent.
+        responses_stored: rows.length,
+        rated_stored: rated.length,
+        // Capture quality, per session, without anyone exporting a CSV to find out.
+        input_methods: byMethod,
+        // The wordings this session answered. A session spanning an item rewrite
+        // is visible here rather than having to be inferred from dates.
+        item_versions: [...new Set(rows.map(r => r.item_version).filter(Boolean))],
+
+        ts: new Date().toISOString(),
+        ts_at: admin.firestore.Timestamp.now(),
+      });
+      log.info('Climate session summary written', { session_id, responses_stored: rows.length });
+    }
+  } catch (summaryErr) {
+    // Never fatal. The response rows are the system of record; this is a
+    // derived convenience and can be rebuilt from them at any time.
+    log.warn('Climate session summary failed', { session_id, error: summaryErr.message });
   }
 });
 

@@ -1,0 +1,97 @@
+{
+  "//": [
+    "Composite indexes for the Clarity 360 response collection.",
+    "",
+    "WHY THIS FILE EXISTS",
+    "",
+    "GET /school-climate/sessions fetched EVERY document in `responses` and",
+    "filtered dates in memory, with a comment saying it did so to avoid needing a",
+    "composite index. That works at test scale and degrades forever: Firestore",
+    "bills per document read, so each dashboard refresh costs one read per answer",
+    "ever recorded, and the latency grows linearly with the product's success.",
+    "",
+    "These indexes let the same queries run server-side. Deploy with:",
+    "",
+    "  firebase deploy --only firestore:indexes --project clarity-360-interviewer-data",
+    "",
+    "ON THE ts FIELD",
+    "",
+    "Indexes intentionally use `ts`, the ISO-8601 STRING, not the newer `ts_at`",
+    "Timestamp. Firestore omits documents that lack an indexed field, so an index",
+    "on ts_at would silently exclude every document written before it existed --",
+    "a quieter and worse failure than the slowness being fixed. ISO-8601 sorts",
+    "lexicographically in chronological order, so string range queries are exact.",
+    "Once a backfill has given every document a ts_at, these can move."
+  ],
+  "indexes": [
+    {
+      "//": "Dashboard: responses for one section, newest first. The base query.",
+      "collectionGroup": "responses",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "section", "order": "ASCENDING" },
+        { "fieldPath": "ts", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "//": "Dashboard filtered to one district — the commonest view by far.",
+      "collectionGroup": "responses",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "section", "order": "ASCENDING" },
+        { "fieldPath": "school_id", "order": "ASCENDING" },
+        { "fieldPath": "ts", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "//": "Compare Cycles: one district, one survey round.",
+      "collectionGroup": "responses",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "section", "order": "ASCENDING" },
+        { "fieldPath": "school_id", "order": "ASCENDING" },
+        { "fieldPath": "survey_cycle", "order": "ASCENDING" },
+        { "fieldPath": "ts", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "//": "Session summary and the report generator: every answer in one session.",
+      "collectionGroup": "responses",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "session_id", "order": "ASCENDING" },
+        { "fieldPath": "section", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "//": "Item-level analysis across districts, scoped to one wording.",
+      "collectionGroup": "responses",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "section", "order": "ASCENDING" },
+        { "fieldPath": "question_id", "order": "ASCENDING" },
+        { "fieldPath": "item_version", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "//": "Session list for a district, newest first.",
+      "collectionGroup": "climate_sessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "school_id", "order": "ASCENDING" },
+        { "fieldPath": "completed_at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "//": "Session list for one role in one district.",
+      "collectionGroup": "climate_sessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "school_id", "order": "ASCENDING" },
+        { "fieldPath": "role", "order": "ASCENDING" },
+        { "fieldPath": "completed_at", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
