@@ -1193,26 +1193,39 @@ app.get('/admin/sessions', requireAdminJWT, async (req, res) => {
     const shouldHideTest = hide_test === 'true';         // only hide test data when explicitly requested
     const shouldShowArchived = show_archived === 'true'; // default: hide archived
 
-    // Cache results for 2 minutes — this endpoint is polled every 30s by the admin dashboard
-    // and each call scans the entire responses collection (N reads per call).
+    // Cache results for 2 minutes — this endpoint is polled every 30s by the
+    // admin dashboard. It no longer scans the whole collection (see below), but
+    // the cache still saves repeated identical queries.
     const cacheKey = `admin_sessions:${JSON.stringify({ section, start, end, hide_test, show_archived })}`;
     const cached = cacheGet(cacheKey);
     if (cached) return res.json({ ...cached, cached: true });
 
+    // Dates are filtered by Firestore, not in memory.
+    //
+    // This previously fetched the ENTIRE responses collection and discarded the
+    // out-of-range documents locally, with a comment explaining it did so to
+    // avoid needing a composite index. That cost one document read per answer
+    // ever recorded, on every call, for a dashboard that polls every 30 seconds
+    // — and it grew in proportion to the product's success.
+    //
+    // The indexes now exist (firestore.indexes.json, deployed 2026-08-30) and
+    // every document has been backfilled with ts_at, so no document is excluded
+    // for lacking the field. Both had to be true before this line could change:
+    // filtering on a field some documents lack returns quietly fewer rows and no
+    // error at all.
     let query = db.collection('responses');
     if (section) query = query.where('section', '==', section);
-    // Date filtering is done in memory below to avoid Firestore composite index requirements.
-    // Firestore requires a composite index for section + ts range queries.
+    if (start) query = query.where('ts_at', '>=', admin.firestore.Timestamp.fromDate(new Date(start)));
+    if (end) {
+      // `end` is an inclusive calendar day, so advance to the start of the next
+      // one — matching the previous in-memory behaviour exactly.
+      const e = new Date(end);
+      e.setDate(e.getDate() + 1);
+      query = query.where('ts_at', '<', admin.firestore.Timestamp.fromDate(e));
+    }
+
     const snapshot = await query.get();
-    const startIso = start ? new Date(start).toISOString() : null;
-    const endIso = end ? (() => { const d = new Date(end); d.setDate(d.getDate() + 1); return d.toISOString(); })() : null;
-    const docs = snapshot.docs
-      .map(d => ({ id: d.id, ...d.data() }))
-      .filter(doc => {
-        if (startIso && doc.ts && doc.ts < startIso) return false;
-        if (endIso && doc.ts && doc.ts > endIso) return false;
-        return true;
-      });
+    const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
     const sessionMap = {};
     for (const doc of docs) {
       const sid = doc.session_id || 'unknown';
