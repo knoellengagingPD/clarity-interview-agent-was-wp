@@ -14,14 +14,16 @@
     "",
     "  firebase deploy --only firestore:indexes --project clarity-360-interviewer-data",
     "",
-    "ON THE ts FIELD",
+    "ON THE ts_at FIELD",
     "",
-    "Indexes intentionally use `ts`, the ISO-8601 STRING, not the newer `ts_at`",
-    "Timestamp. Firestore omits documents that lack an indexed field, so an index",
-    "on ts_at would silently exclude every document written before it existed --",
-    "a quieter and worse failure than the slowness being fixed. ISO-8601 sorts",
-    "lexicographically in chronological order, so string range queries are exact.",
-    "Once a backfill has given every document a ts_at, these can move."
+    "These index the ts_at Timestamp rather than the ts string. That is only safe",
+    "because backfill-ts-at.mjs has already run: 4393 of 4393 documents carry the",
+    "field, 0 unparseable. The ordering mattered -- Firestore OMITS documents that",
+    "lack an indexed field, so indexing ts_at first would have silently dropped",
+    "every historical document from date-filtered results, with no error anywhere.",
+    "",
+    "`ts` is still written and remains the human-readable value in exports. If a",
+    "future field is added to these documents, backfill it before indexing it."
   ],
   "indexes": [
     {
@@ -30,7 +32,7 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "section", "order": "ASCENDING" },
-        { "fieldPath": "ts", "order": "DESCENDING" }
+        { "fieldPath": "ts_at", "order": "DESCENDING" }
       ]
     },
     {
@@ -40,7 +42,7 @@
       "fields": [
         { "fieldPath": "section", "order": "ASCENDING" },
         { "fieldPath": "school_id", "order": "ASCENDING" },
-        { "fieldPath": "ts", "order": "DESCENDING" }
+        { "fieldPath": "ts_at", "order": "DESCENDING" }
       ]
     },
     {
@@ -51,7 +53,7 @@
         { "fieldPath": "section", "order": "ASCENDING" },
         { "fieldPath": "school_id", "order": "ASCENDING" },
         { "fieldPath": "survey_cycle", "order": "ASCENDING" },
-        { "fieldPath": "ts", "order": "DESCENDING" }
+        { "fieldPath": "ts_at", "order": "DESCENDING" }
       ]
     },
     {

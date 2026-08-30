@@ -1047,10 +1047,8 @@ app.post('/school-climate/session-complete', requireAccessKey, async (req, res) 
       ratedResponses: rated_responses || [],
       dreamBigResponses: dream_big_responses || []
     });
-    res.status(202).json({ status: 'accepted' });
   } catch (err) {
     console.error('[school-climate/session-complete] Supabase write failed:', err);
-    res.status(202).json({ status: 'accepted' });
   }
 
   // ── Session summary document ────────────────────────────────────────────────
@@ -1116,6 +1114,16 @@ app.post('/school-climate/session-complete', requireAccessKey, async (req, res) 
     // derived convenience and can be rebuilt from them at any time.
     log.warn('Climate session summary failed', { session_id, error: summaryErr.message });
   }
+
+  // Respond LAST, once every write has been awaited.
+  //
+  // This handler runs on Vercel, where the container is frozen as soon as the
+  // response is sent — any await still outstanding is abandoned mid-flight and
+  // the write silently disappears. The Supabase call above already carried a
+  // comment saying exactly this, and I put the summary write after the response
+  // anyway. It would have failed only in production, only sometimes, and left
+  // nothing behind to explain the missing documents.
+  res.status(202).json({ status: 'accepted' });
 });
 
 // ─── Workplace: Session Complete ──────────────────────────────────────────────

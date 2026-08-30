@@ -22,3 +22,7 @@ yarn-error.log*
 firebase-service-account.json
 .env*.local
 .vercel
+
+# Exported interview data — real participant speech, never commit it.
+archive/
+pleasanton-responses.csv
