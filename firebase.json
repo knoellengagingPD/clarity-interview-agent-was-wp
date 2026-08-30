@@ -1,0 +1,21 @@
+{
+  "//": [
+    "Minimal Firebase config so the CLI can find firestore.indexes.json.",
+    "",
+    "Deliberately declares ONLY indexes. There is no `rules` entry because there",
+    "is no firestore.rules file in this repository — adding one here would make",
+    "the CLI look for a file that does not exist and fail the deploy, and",
+    "generating a rules file from scratch would be worse: `firebase deploy` would",
+    "then overwrite whatever security rules are currently live in the console with",
+    "whatever a fresh scaffold contains. Indexes only, until the real rules are",
+    "pulled down and committed deliberately.",
+    "",
+    "  firebase deploy --only firestore:indexes --project clarity-360-interviewer-data",
+    "",
+    "The Firestore data itself is reached through the Admin SDK in server.js using",
+    "a service account, not through this config."
+  ],
+  "firestore": {
+    "indexes": "firestore.indexes.json"
+  }
+}
