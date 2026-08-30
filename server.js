@@ -460,6 +460,27 @@ function validateLogPayload(body) {
       return 'text too long (max 5000 chars)';
   }
 
+  // School climate ratings. Previously unvalidated: whatever arrived in `rating`
+  // was written to Firestore as-is, so a frontend bug could store a string, a
+  // null, or a number outside the scale, and nothing downstream would notice
+  // until an average came out wrong.
+  //
+  // 0 is permitted and meaningful — it is the sentinel for the open-ended Dream
+  // Big questions, which carry text instead of a rating.
+  //
+  // Rejecting is deliberately preferred to coercing. A rating that arrives
+  // malformed is a bug upstream, and silently repairing it into a plausible
+  // number is how a defect becomes a teacher's recorded opinion. Refusing the
+  // write leaves a visible gap instead, which is the failure we can see.
+  if (section.startsWith('school_climate_')) {
+    if (typeof rating !== 'number' || !Number.isInteger(rating) || rating < 0 || rating > 4)
+      return 'rating must be an integer 0–4 (0 for open-ended questions)';
+    if (followup_text && typeof followup_text !== 'string')
+      return 'followup_text must be a string';
+    if (followup_text && followup_text.length > 2000)
+      return 'followup_text too long (max 2000 chars)';
+  }
+
   if (section === 'superintendent_interview' || section === 'find_my_purpose') {
     if (followup_text && typeof followup_text !== 'string')
       return 'followup_text must be a string';
