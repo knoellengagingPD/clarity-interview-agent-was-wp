@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(lsof:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nfix: staged server.js changes\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(~/deploy-all.sh)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git checkout *)",
+      "Bash(npm install *)",
+      "Bash(npm uninstall *)",
+      "Bash(gh api *)"
+    ]
+  }
+}
