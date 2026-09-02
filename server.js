@@ -5742,11 +5742,34 @@ app.get('/api/renewedtude/verify-token', async (req, res) => {
 app.post('/workplace/log_response', requireAccessKey, async (req, res) => {
   try {
     const { session_id, section, question_id, domain, organization,
-      department, organization_id, token, rating, followup_text, response_mode } = req.body || {};
+      department, organization_id, token, rating, followup_text, response_mode,
+      question_type, item_version, question_text, scale_labels, scale_max,
+      input_method } = req.body || {};
     const validationError = validateWorkplaceLogPayload(req.body);
     if (validationError) {
       return res.status(400).json({ error: validationError });
     }
+
+    // Settles the data-model question deferred in the note above
+    // validateWorkplaceLogPayload: numeric score, or text label?
+    //
+    // Numeric — and the climate work is why. Store the integer AND the scale
+    // that produced it, and the label is recoverable from the row itself
+    // without WP_SCALE_MAP or any other lookup living in code. That is exactly
+    // what scale_labels was added for on the climate path, and it removes the
+    // reason the question was open.
+    //
+    // Rejected rather than coerced. String(rating) turned every bad value into
+    // a plausible-looking row; a 400 is visible, a silently stringified rating
+    // is not. Same rule as the climate write path.
+    let ratingNum = null;
+    if (rating != null && rating !== '') {
+      ratingNum = typeof rating === 'number' ? rating : parseInt(String(rating), 10);
+      if (!Number.isInteger(ratingNum) || ratingNum < 0 || ratingNum > 4) {
+        return res.status(400).json({ error: 'rating must be an integer 0-4' });
+      }
+    }
+
     const doc = {
       session_id: String(session_id),
       section: section || 'workplace_climate',
@@ -5756,7 +5779,7 @@ app.post('/workplace/log_response', requireAccessKey, async (req, res) => {
       department: department || '',
       organization_id: organization_id || '',
       token: token || '',
-      rating: rating == null ? '' : String(rating),
+      rating: ratingNum,
       // Workplace explanations were the one product writing free text raw.
       // The stakes here are the highest of the three: a school-climate
       // respondent naming a colleague is awkward, an employee naming their
@@ -5765,8 +5788,34 @@ app.post('/workplace/log_response', requireAccessKey, async (req, res) => {
       followup_text: scrubPII((followup_text || '').toString().substring(0, 2000)),
       response_mode: response_mode || 'voice',
       created_at: admin.firestore.FieldValue.serverTimestamp(),
+
+      // ── Analysis fields, mirroring the climate rows ────────────────────────
+      // Without these a stored answer cannot be interpreted without the source
+      // code that produced it: which wording it was given to, what the scale
+      // meant, and whether the number was clicked or transcribed. The climate
+      // path added them on 2026-08-30 after three items were reworded from
+      // negative to positive under the same ids — same question_id, opposite
+      // meaning, and nothing in the data to tell them apart.
+      ...(question_type ? { question_type: String(question_type).slice(0, 16) } : {}),
+      ...(item_version ? { item_version: String(item_version).slice(0, 16) } : {}),
+      ...(question_text ? { question_text: String(question_text).slice(0, 500) } : {}),
+      ...(Array.isArray(scale_labels) ? { scale_labels: scale_labels.slice(0, 8).map(s => String(s).slice(0, 64)) } : {}),
+      ...(Number.isInteger(scale_max) ? { scale_max } : {}),
+      ...(input_method ? { input_method: String(input_method).slice(0, 8) } : {}),
+
+      // Real Timestamp alongside the string, so date-range queries can be
+      // served by an index instead of fetching the collection and filtering
+      // in memory. Same reasoning and same field name as the climate rows.
+      ts: new Date().toISOString(),
+      ts_at: admin.firestore.Timestamp.now(),
     };
-    await admin.firestore().collection('workplace_climate').add(doc);
+
+    // Idempotent. `.add()` gave every write a fresh id, so a retry — a flaky
+    // network, a double-submit, the client's own resend — silently produced a
+    // second row and inflated the average for that question. A deterministic
+    // id makes a retry a no-op instead. Identical to the climate fix.
+    const docId = `${String(session_id)}__${String(question_id)}`;
+    await admin.firestore().collection('workplace_climate').doc(docId).set(doc, { merge: true });
     return res.json({ ok: true });
   } catch (err) {
     console.error('workplace log_response failed:', err);
