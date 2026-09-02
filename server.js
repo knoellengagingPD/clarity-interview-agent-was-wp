@@ -868,7 +868,10 @@ app.post(
       doc.rating = rating;
       doc.followup_text = scrubPII(followup_text || '');
     } else if (section === 'dream_big') {
-      doc.text = text || '';
+      // Was the one free-text branch in this whole block writing unscrubbed.
+      // A Dream Big answer is the longest and most candid thing anyone says in
+      // an interview — "if you could change anything" invites naming names.
+      doc.text = scrubPII(text || '');
     } else if (section === 'superintendent_interview') {
       doc.followup_text = scrubPII(followup_text || '');
       if (rating !== undefined) doc.rating = rating;
@@ -3012,8 +3015,19 @@ app.patch('/fmp/participant/:code/goals', requireAccessKey, async (req, res) => 
 
     if (snap.empty) return res.status(404).json({ error: 'Participant not found' });
 
+    // Goals are free text a participant dictated about their own life, and an
+    // ordinary SMART goal names people: "Ask Dave in accounting whether I can
+    // shadow him on Thursdays." They are read back in session 3 and included
+    // in the personal report, so an unscrubbed name here persists for 60 days
+    // and lands in a document. Every other free-text field on every other
+    // product goes through scrubPII; this one was writing raw.
+    const scrubbedGoals = {};
+    for (const [k, v] of Object.entries(goals)) {
+      scrubbedGoals[k] = typeof v === 'string' ? scrubPII(v) : v;
+    }
+
     await snap.docs[0].ref.update({
-      goals,
+      goals: scrubbedGoals,
       session2_session_id: session2_session_id || null,
       session2_completed_at: new Date().toISOString(),
       status: 'session_2_complete',
@@ -3241,12 +3255,18 @@ app.post('/fmp/checkin/:code', requireAccessKey, async (req, res) => {
     const participantRef = snap.docs[0].ref;
     const participant = snap.docs[0].data();
 
+    // Scrubbed, like every other free-text field the platform stores. These
+    // three were not, and they are the most personal text Find My Purpose
+    // holds: a participant at day 14, 30, 45 and 60 describing what went well
+    // and what got in the way. "My wins" and "my obstacles" are questions that
+    // invite naming a manager, a partner, a colleague — and the answers are
+    // kept for the whole 60-day cycle and read back in the personal report.
     const normalizedProgress = goal_progress.map(entry => ({
       goal_id: entry.goal_id,
       rating: parseInt(entry.rating, 10),
-      wins: (entry.wins || '').substring(0, 1000),
-      obstacles: (entry.obstacles || '').substring(0, 1000),
-      ...(entry.updated_goal ? { updated_goal: entry.updated_goal.substring(0, 500) } : {}),
+      wins: scrubPII((entry.wins || '').substring(0, 1000)),
+      obstacles: scrubPII((entry.obstacles || '').substring(0, 1000)),
+      ...(entry.updated_goal ? { updated_goal: scrubPII(entry.updated_goal.substring(0, 500)) } : {}),
     }));
 
     const checkinDoc = {
@@ -5461,9 +5481,11 @@ app.post('/fmp/save-checkin', requireAccessKey, async (req, res) => {
       return_code: normalizedCode,
       day: dayNum,
       type: 'voice_checkin',
+      // The spoken check-in. Only the answer is scrubbed — the question is our
+      // own text and scrubbing it would mangle nothing but could only do harm.
       responses: responses.map(r => ({
         question: (r.question || '').substring(0, 500),
-        answer: (r.answer || '').substring(0, 3000),
+        answer: scrubPII((r.answer || '').substring(0, 3000)),
       })),
       completed_at: completedAt || new Date().toISOString(),
       status: 'complete',
@@ -5735,7 +5757,12 @@ app.post('/workplace/log_response', requireAccessKey, async (req, res) => {
       organization_id: organization_id || '',
       token: token || '',
       rating: rating == null ? '' : String(rating),
-      followup_text: (followup_text || '').toString().substring(0, 2000),
+      // Workplace explanations were the one product writing free text raw.
+      // The stakes here are the highest of the three: a school-climate
+      // respondent naming a colleague is awkward, an employee naming their
+      // manager in a survey the employer commissioned is a different problem
+      // entirely — and the promise made on screen is the same promise.
+      followup_text: scrubPII((followup_text || '').toString().substring(0, 2000)),
       response_mode: response_mode || 'voice',
       created_at: admin.firestore.FieldValue.serverTimestamp(),
     };
