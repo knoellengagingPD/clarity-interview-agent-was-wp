@@ -5254,6 +5254,25 @@ app.get('/school-climate/school-ids', requireAdminJWT, async (req, res) => {
   }
 });
 
+// GET /workplace/organization-ids
+// Returns sorted list of all unique organization_id values in workplace_tokens.
+//
+// The School Climate equivalent above has existed since a district was typed
+// into the name box and lost. Workplace shipped without it, so its
+// Organization ID field was a bare text input that had to be remembered and
+// retyped exactly — and every panel on that tab keys off it, so one typo
+// silently reports on a district that does not exist.
+app.get('/workplace/organization-ids', requireAdminJWT, async (req, res) => {
+  try {
+    const snap = await admin.firestore().collection('workplace_tokens').get();
+    const ids = [...new Set(snap.docs.map(d => d.data().organization_id).filter(Boolean))].sort();
+    return res.json({ organization_ids: ids });
+  } catch (e) {
+    log.error('Failed to fetch organization IDs from workplace_tokens', { error: e.message });
+    return res.status(500).json({ error: 'Failed to fetch organization IDs' });
+  }
+});
+
 // ─── School Climate: Archive / Unarchive Session ──────────────────────────────
 // PATCH /school-climate/sessions/:sessionId
 // Body: { school_id, action: 'archive' | 'unarchive' }
