@@ -4780,7 +4780,12 @@ app.post('/school-climate/send-deployment-email', requireAdminJWT, async (req, r
     const data = await emailRes.json();
     if (!emailRes.ok) {
       log.error('Deployment email send failed', { role, status: emailRes.status, body: JSON.stringify(data) });
-      return res.status(502).json({ error: 'Failed to send email' });
+      // Resend says exactly what is wrong — an unverified sending domain, a
+      // rejected key, a malformed recipient. Replacing that with 'Failed to
+      // send email' is only marginally more use than the silent failure this
+      // was paired with on the client.
+      const why = data?.message || data?.error?.message || data?.name || 'Resend rejected the message';
+      return res.status(502).json({ error: `Resend: ${why}` });
     }
     log.info('Deployment email sent', { role, recipient: recipient_email, resendId: data.id });
     return res.json({ status: 'ok', id: data.id });
@@ -5292,6 +5297,152 @@ app.get('/workplace/organization-ids', requireAdminJWT, async (req, res) => {
   } catch (e) {
     log.error('Failed to fetch organization IDs from workplace_tokens', { error: e.message });
     return res.status(500).json({ error: 'Failed to fetch organization IDs' });
+  }
+});
+
+// POST /workplace/send-invitation
+// Body: { token, organization_name, department, recipient_email }
+//
+// The workplace equivalent of /school-climate/send-deployment-email, which has
+// existed for months. Workplace shipped with no way to send anybody a link at
+// all — not a broken feature, an absent one.
+//
+// Deliberately does NOT list the questions the way the climate email does.
+// Those are school-climate items sent to school staff by their own district.
+// These ask an employee how satisfied they are with their job and whether they
+// can raise concerns with their manager, in a survey their employer
+// commissioned — a full list of them sitting in an inbox, forwardable, is a
+// different object entirely. The link shows the questions before anyone starts.
+app.post('/workplace/send-invitation', requireAdminJWT, async (req, res) => {
+  const { token, organization_name, department, recipient_email } = req.body || {};
+
+  if (!token || typeof token !== 'string' || !/^WRK-[A-Z0-9]+$/.test(token.trim())) {
+    return res.status(400).json({ error: 'A valid WRK- token is required' });
+  }
+  if (!recipient_email || typeof recipient_email !== 'string' || !recipient_email.includes('@')) {
+    return res.status(400).json({ error: 'Valid recipient_email is required' });
+  }
+  if (!process.env.RESEND_API_KEY) {
+    log.error('[workplace/send-invitation] RESEND_API_KEY is not set — cannot send email');
+    return res.status(503).json({ error: 'RESEND_API_KEY is not set on this server' });
+  }
+
+  const orgDisplay = (organization_name || '').trim() || 'your organization';
+  const dept = (department || '').trim();
+  const surveyUrl = `https://clarity360hq.com/workplace/interview?token=${encodeURIComponent(token.trim())}`;
+
+  const html = `<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f8fafc;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;padding:40px 20px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;">
+        <tr>
+          <td style="background:#4f46e5;padding:36px 48px;">
+            <p style="margin:0 0 4px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:700;color:rgba(255,255,255,0.75);letter-spacing:0.12em;text-transform:uppercase;">Clarity</p>
+            <h1 style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:26px;font-weight:800;color:#ffffff;">Your Workplace Climate Interview</h1>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:36px 48px;">
+            <p style="margin:0 0 16px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;color:#374151;line-height:1.7;">
+              ${escapeHtml(orgDisplay)}${dept ? ` (${escapeHtml(dept)})` : ''} is gathering honest feedback about what it is like to work there, and you have been invited to take part.
+            </p>
+            <p style="margin:0 0 16px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;color:#374151;line-height:1.7;">
+              It is a voice interview and takes about 15 minutes. You will tap a rating for each statement and then say why in your own words. <strong>Your microphone stays off until you click to speak.</strong>
+            </p>
+            <p style="margin:0 0 24px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;color:#374151;line-height:1.7;">
+              Your individual answers are never shared with your employer. Only combined themes and averages are reported, and names are removed from anything you say.
+            </p>
+            <table cellpadding="0" cellspacing="0" style="margin:0 0 24px;">
+              <tr><td style="background:#4f46e5;border-radius:50px;">
+                <a href="${surveyUrl}" style="display:inline-block;padding:15px 38px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:16px;font-weight:700;color:#ffffff;text-decoration:none;">Begin your interview →</a>
+              </td></tr>
+            </table>
+            <p style="margin:0 0 6px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;color:#64748b;line-height:1.6;">
+              <strong>Before you start:</strong> use a desktop or laptop with Chrome or Edge — this does not work on phones or tablets. Wired headphones or your computer's own microphone work best; avoid Bluetooth headsets.
+            </p>
+            <p style="margin:0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#94a3b8;line-height:1.6;word-break:break-all;">
+              If the button does not work, paste this into your browser:<br />${surveyUrl}
+            </p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:0 48px 32px;border-top:1px solid #f1f5f9;">
+            <p style="margin:20px 0 0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#94a3b8;">Clarity — Engaging Education Solutions, LLC</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+  try {
+    const emailRes = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: 'Clarity <noreply@clarity360hq.com>',
+        to: [recipient_email.trim()],
+        subject: `Your Workplace Climate Interview — ${orgDisplay}`,
+        html,
+      }),
+    });
+    const data = await emailRes.json();
+    if (!emailRes.ok) {
+      log.error('Workplace invitation send failed', { status: emailRes.status, body: JSON.stringify(data) });
+      const why = data?.message || data?.error?.message || data?.name || 'Resend rejected the message';
+      return res.status(502).json({ error: `Resend: ${why}` });
+    }
+    log.info('Workplace invitation sent', { recipient: recipient_email, resendId: data.id });
+    return res.json({ status: 'ok', id: data.id });
+  } catch (e) {
+    log.error('Workplace invitation fetch error', { error: e.message });
+    return res.status(500).json({ error: 'Email send failed' });
+  }
+});
+
+// GET /workplace/token?organization_id=...
+// Returns the newest active token for an organization, or null.
+//
+// School Climate has had this since 2026-08-27, which is why its button reads
+// "Regenerate" when a token exists. Workplace had no equivalent, so after any
+// page reload the only visible action was "+ Generate Token" — and generating
+// a second token for an organization that already has one is how you end up
+// with several live links and no idea which is in whose email. Both keep
+// working, which is exactly what makes it hard to notice.
+app.get('/workplace/token', requireAdminJWT, async (req, res) => {
+  try {
+    const orgId = String(req.query.organization_id || '').trim();
+    if (!orgId) return res.status(400).json({ error: 'organization_id query param is required' });
+
+    const snap = await admin.firestore().collection('workplace_tokens').get();
+    let newest = null;
+    for (const d of snap.docs) {
+      const data = d.data() || {};
+      const id = String(data.organizationId || data.organization_id || '').trim();
+      if (id !== orgId) continue;
+      if (data.status && data.status !== 'active') continue;
+      const createdAt = data.created_at || data.createdAt || '';
+      if (!newest || createdAt > newest.created_at) {
+        newest = {
+          token: data.token || d.id,
+          created_at: createdAt,
+          is_test: data.is_test === true || data.isTest === true,
+          organization_name: String(data.organizationName || data.organization_name || '').trim(),
+          department: String(data.department || '').trim(),
+        };
+      }
+    }
+    return res.json({ token: newest });
+  } catch (e) {
+    log.error('Failed to fetch workplace token', { error: e.message });
+    return res.status(500).json({ error: 'Failed to fetch token' });
   }
 });
 
