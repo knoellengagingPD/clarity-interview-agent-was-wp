@@ -5265,8 +5265,30 @@ app.get('/school-climate/school-ids', requireAdminJWT, async (req, res) => {
 app.get('/workplace/organization-ids', requireAdminJWT, async (req, res) => {
   try {
     const snap = await admin.firestore().collection('workplace_tokens').get();
-    const ids = [...new Set(snap.docs.map(d => d.data().organization_id).filter(Boolean))].sort();
-    return res.json({ organization_ids: ids });
+    // The token document stores organizationId in camelCase, while the request
+    // body that creates it uses organization_id and every response row stores
+    // organization_id. Three spellings of one field across one feature, which
+    // is how the first version of this endpoint returned an empty list and the
+    // picker silently did nothing. Read both rather than assume either.
+    // Names as well as ids. Choosing an id from the picker left the name box
+    // empty, and generation requires both — so the picker could show you an
+    // organization and then refuse to act on it, which is a worse experience
+    // than not having offered the choice at all.
+    const byId = new Map();
+    for (const d of snap.docs) {
+      const data = d.data();
+      const id = String(data.organizationId || data.organization_id || '').trim();
+      if (!id) continue;
+      const name = String(data.organizationName || data.organization_name || '').trim();
+      if (!byId.has(id) || (!byId.get(id) && name)) byId.set(id, name);
+    }
+    const organizations = [...byId.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.id.localeCompare(b.id));
+    return res.json({
+      organization_ids: organizations.map(o => o.id),  // kept for older clients
+      organizations,
+    });
   } catch (e) {
     log.error('Failed to fetch organization IDs from workplace_tokens', { error: e.message });
     return res.status(500).json({ error: 'Failed to fetch organization IDs' });
