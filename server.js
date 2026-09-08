@@ -5407,6 +5407,98 @@ app.post('/workplace/send-invitation', requireAdminJWT, async (req, res) => {
   }
 });
 
+// GET /workplace/sessions?organization_id=&hide_test=&show_archived=
+// Returns one row per interview: when, how many answers, complete or not,
+// whether it is archived, and its Dream Big text.
+//
+// Workplace had aggregates and nothing else, so an abandoned interview could
+// be seen dragging an average down and there was no way to look at it, let
+// alone set it aside. School Climate has had this since August.
+app.get('/workplace/sessions', requireAdminJWT, async (req, res) => {
+  try {
+    const orgId = String(req.query.organization_id || '').trim();
+    if (!orgId) return res.status(400).json({ error: 'organization_id query param is required' });
+    const shouldHideTest = req.query.hide_test === 'true';
+    const showArchived = req.query.show_archived === 'true';
+
+    const snap = await admin.firestore().collection('workplace_climate')
+      .where('organization_id', '==', orgId).get();
+
+    let testTokens = new Set();
+    if (shouldHideTest) {
+      const tokSnap = await admin.firestore().collection('workplace_tokens')
+        .where('organizationId', '==', orgId).get();
+      tokSnap.docs.forEach(d => { const t = d.data() || {}; if (t.is_test === true && t.token) testTokens.add(t.token); });
+    }
+
+    const archived = new Set();
+    const flagSnap = await admin.firestore().collection('workplace_session_flags')
+      .where('organization_id', '==', orgId).get();
+    flagSnap.docs.forEach(d => { if ((d.data() || {}).status === 'archived') archived.add(d.data().session_id); });
+
+    const byId = new Map();
+    for (const d of snap.docs) {
+      const doc = d.data() || {};
+      if (shouldHideTest && doc.token && testTokens.has(doc.token)) continue;
+      const sid = doc.session_id || 'unknown';
+      if (!byId.has(sid)) {
+        byId.set(sid, {
+          session_id: sid, organization: doc.organization || '', department: doc.department || '',
+          token: doc.token || '', ts: doc.ts || null, answers: 0, rated: 0,
+          archived: archived.has(sid), open_responses: [],
+        });
+      }
+      const row = byId.get(sid);
+      row.answers += 1;
+      if (typeof doc.rating === 'number') row.rated += 1;
+      if (doc.ts && (!row.ts || doc.ts < row.ts)) row.ts = doc.ts;
+      const qid = String(doc.question_id || '');
+      if (qid.startsWith('DB') && doc.followup_text) {
+        row.open_responses.push({ question_id: qid, text: doc.followup_text });
+      }
+    }
+
+    let sessions = [...byId.values()];
+    if (!showArchived) sessions = sessions.filter(s => !s.archived);
+    // 19 questions: 16 rated plus 3 Dream Big. Anything short of that was
+    // abandoned, and saying so is the whole point of this list.
+    sessions.forEach(s => { s.complete = s.answers >= 19; });
+    sessions.sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')));
+    return res.json({ sessions });
+  } catch (e) {
+    log.error('Failed to fetch workplace sessions', { error: e.message });
+    return res.status(500).json({ error: 'Failed to fetch sessions' });
+  }
+});
+
+// PATCH /workplace/sessions/:sessionId   Body: { organization_id, action }
+// Archiving writes a flag; it never deletes an answer. Same model as School
+// Climate, so an archive is always reversible.
+app.patch('/workplace/sessions/:sessionId', requireAdminJWT, async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const { organization_id, action } = req.body || {};
+    if (!sessionId || !organization_id) {
+      return res.status(400).json({ error: 'sessionId and organization_id are required' });
+    }
+    const ref = admin.firestore().collection('workplace_session_flags').doc(sessionId);
+    if (action === 'archive') {
+      await ref.set({ session_id: sessionId, organization_id, status: 'archived', created_at: new Date().toISOString() });
+      log.info('Workplace session archived', { sessionId, organization_id });
+      return res.json({ status: 'ok', action: 'archived' });
+    }
+    if (action === 'unarchive') {
+      await ref.delete();
+      log.info('Workplace session unarchived', { sessionId, organization_id });
+      return res.json({ status: 'ok', action: 'unarchived' });
+    }
+    return res.status(400).json({ error: 'action must be "archive" or "unarchive"' });
+  } catch (e) {
+    log.error('Workplace session flag update failed', { error: e.message });
+    return res.status(500).json({ error: 'Failed to update session' });
+  }
+});
+
 // GET /workplace/token?organization_id=...
 // Returns the newest active token for an organization, or null.
 //
@@ -6282,9 +6374,26 @@ app.get('/workplace/stats', requireAdminJWT, async (req, res) => {
     const openResponses = [];
     let totalRated = 0;
 
+    // Archived sessions are excluded from every figure below. Without this,
+    // archiving would remove an interview from the list and leave it in the
+    // averages — which is worse than not being able to archive it at all,
+    // because the number would look attended to and would not have moved.
+    const archivedSessions = new Set();
+    try {
+      const flagSnap = await admin.firestore().collection('workplace_session_flags')
+        .where('organization_id', '==', String(organization_id)).get();
+      flagSnap.docs.forEach(d => {
+        const f = d.data() || {};
+        if (f.status === 'archived' && f.session_id) archivedSessions.add(f.session_id);
+      });
+    } catch (e) {
+      log.warn('Could not read workplace session flags', { error: e.message });
+    }
+
     snap.docs.forEach(d => {
       const doc = d.data() || {};
       if (shouldHideTest && doc.token && testTokenSet.has(doc.token)) return;
+      if (doc.session_id && archivedSessions.has(doc.session_id)) return;
 
       const createdMs = doc.created_at && doc.created_at.toMillis ? doc.created_at.toMillis() : null;
       if (startMs && createdMs && createdMs < startMs) return;
