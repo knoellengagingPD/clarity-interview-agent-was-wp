@@ -797,7 +797,13 @@ app.get('/health',
 // Session token
 app.get(
   '/session',
-  rateLimit({ windowMs: 60_000, max: 10 }),
+  // 10/min was sized for individual sign-ups. Every device in a school shares
+  // one public IP, so a class of 25 starting together saw the first 10 succeed
+  // and the rest get a 429 — the interview simply would not begin. This limiter
+  // sits behind requireAccessKey, so it can be generous: it exists to blunt a
+  // burst against an endpoint that mints OpenAI credentials, not to cap
+  // legitimate classroom use.
+  rateLimit({ windowMs: 60_000, max: 120 }),
   requireAccessKey,
   async (req, res) => {
     const model = 'gpt-realtime';
@@ -843,7 +849,11 @@ app.get(
 // write immediately, same as rated ones always did.
 app.post(
   '/log_response',
-  rateLimit({ windowMs: 60_000, max: 60 }),
+  // One write per answered question. A single participant produces roughly one
+  // a minute; twenty-five in a computer lab produce twenty-five, all from one
+  // IP — and a 429 here does not delay an answer, it loses it. 60 was within a
+  // factor of two of a single classroom.
+  rateLimit({ windowMs: 60_000, max: 600 }),
   requireAccessKey,
   async (req, res) => {
     const validationError = validateLogPayload(req.body);
@@ -5122,7 +5132,10 @@ const CRISIS_SESSION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const CRISIS_TOKEN_RE      = /^SCL-[A-Z0-9]{6}$/;
 
 app.post('/school-climate/flag-session',
-  rateLimit({ windowMs: 60_000, max: 3, bucket: 'crisis-flag' }),
+  // Raised from 3. A dropped crisis flag is the worst failure this system can
+  // have, and 3/min from a shared school IP was one simultaneous incident away
+  // from silently discarding one.
+  rateLimit({ windowMs: 60_000, max: 30, bucket: 'crisis-flag' }),
   async (req, res) => {
   const { session_id, token } = req.body || {};
 
@@ -6165,7 +6178,10 @@ const WP_CRISIS_SESSION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const WP_CRISIS_TOKEN_RE      = /^WRK-[A-Z0-9]{6}$/;
 
 app.post('/workplace/flag-session',
-  rateLimit({ windowMs: 60_000, max: 3, bucket: 'wp-crisis-flag' }),
+  // Raised from 3. A dropped crisis flag is the worst failure this system can
+  // have, and 3/min from a shared school IP was one simultaneous incident away
+  // from silently discarding one.
+  rateLimit({ windowMs: 60_000, max: 30, bucket: 'wp-crisis-flag' }),
   async (req, res) => {
   const { session_id, token } = req.body || {};
 
