@@ -6043,6 +6043,95 @@ app.get('/api/renewedtude/verify-token', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // CLARITY WORKPLACE — isolated endpoints (new product, new collections)
 // ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Transcribe one recorded answer.
+ *
+ * Exists so the interview page can stop sending microphone audio to
+ * gpt-realtime altogether. Today the same twelve minutes of speech is billed
+ * twice — once as realtime audio input, once by the transcription model
+ * configured on that same input — and realtime audio input is 48.7% of the
+ * bill ($4.535 of $9.31, 8-15 September) against $0.077 for transcription.
+ *
+ * Realtime's built-in transcriber only ever sees audio we send IT, so a page
+ * that stops sending audio needs its own way to get text. This is that way.
+ * The model and parameters match the client config exactly, because both
+ * settings were bought with failures:
+ *
+ *   language: 'en'   without it the transcriber guesses, and on a one-word
+ *                    answer it has almost no acoustic context to guess from.
+ *                    The 2026-08-30 trace has it returning "وال" and "一" for
+ *                    spoken ratings.
+ *
+ *   NO prompt        a prompt added on 2026-08-30 came back as though the
+ *                    participant had SAID it. Whisper-family models emit the
+ *                    prompt when audio is silent or unclear, which is exactly
+ *                    the opening statement while someone is still settling in.
+ *
+ * express.json() above is capped at 50kb, so audio needs its own parser. Raw
+ * rather than multipart: one file, no fields, nothing to parse.
+ */
+app.post('/workplace/transcribe',
+  // Matches /workplace/log_response at 600/min. One request per answer, so a
+  // classroom of 25 moving together is ~25/min against this endpoint.
+  rateLimit({ windowMs: 60_000, max: 600, bucket: 'wp-transcribe' }),
+  requireAccessKey,
+  express.raw({
+    type: ['audio/*', 'application/octet-stream', 'video/webm'],
+    // Three minutes of Opus is well under a megabyte; MAX_RECORDING_MS caps
+    // the client at exactly that. The ceiling is for safety, not for use.
+    limit: '25mb',
+  }),
+  async (req, res) => {
+    const bytes = req.body?.length || 0;
+    if (!bytes) return res.status(400).json({ error: 'No audio received.' });
+
+    try {
+      const form = new FormData();
+      form.append(
+        'file',
+        new Blob([req.body], { type: req.header('content-type') || 'audio/webm' }),
+        'answer.webm',
+      );
+      form.append('model', 'gpt-4o-mini-transcribe');
+      form.append('language', 'en');
+
+      // Generous: transcription latency scales with recording length, and the
+      // client caps a single answer at three minutes. The client has its own
+      // backstop (TRANSCRIPT_WAIT_MS) and will let the interview continue
+      // without the text rather than strand the participant, so a slow reply
+      // here costs the answer, never the session.
+      const resp = await fetchWithTimeout(
+        'https://api.openai.com/v1/audio/transcriptions',
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+          body: form,
+        },
+        30_000,
+      );
+
+      if (!resp.ok) {
+        const errText = await resp.text();
+        log.error('Transcription error', { status: resp.status, body: errText.slice(0, 500) });
+        return res.status(502).json({ error: 'Transcription failed.' });
+      }
+
+      const data = await resp.json();
+      // Never log the text. It is what somebody said about their workplace.
+      log.info('Workplace answer transcribed', { bytes, chars: (data.text || '').length });
+      return res.json({ text: data.text || '' });
+    } catch (e) {
+      if (e.name === 'AbortError') {
+        log.error('Transcription timeout', { bytes });
+        return res.status(504).json({ error: 'Transcription timed out.' });
+      }
+      log.error('Transcription exception', { message: e.message });
+      return res.status(500).json({ error: 'Transcription failed.' });
+    }
+  },
+);
+
 app.post('/workplace/log_response', requireAccessKey, async (req, res) => {
   try {
     const { session_id, section, question_id, domain, organization,
