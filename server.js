@@ -6071,11 +6071,52 @@ app.get('/api/renewedtude/verify-token', async (req, res) => {
  * express.json() above is capped at 50kb, so audio needs its own parser. Raw
  * rather than multipart: one file, no fields, nothing to parse.
  */
+/**
+ * Off unless explicitly switched on.
+ *
+ * Nothing in production calls /workplace/transcribe — the client that uses it
+ * lives on the send-transcript-as-text branch and has not shipped. Until it
+ * does, an open audio-upload endpoint is pure attack surface: it accepts 25MB
+ * per request and bills transcription to our OpenAI account.
+ *
+ * requireAccessKey is NOT sufficient protection on its own. CLARITY_ACCESS_KEY
+ * reaches the browser as NEXT_PUBLIC_CLARITY_KEY, which Next.js inlines into
+ * the client bundle at build time — so it is readable by anyone who loads the
+ * site. It is a speed bump, not authentication.
+ *
+ * Set WORKPLACE_TRANSCRIBE_ENABLED=yes when the branch ships.
+ */
+const WORKPLACE_TRANSCRIBE_ENABLED = process.env.WORKPLACE_TRANSCRIBE_ENABLED === 'yes';
+
+/**
+ * Require a real workplace token, not just the public access key.
+ *
+ * Runs BEFORE express.raw on purpose. Checking the header costs nothing;
+ * buffering 25MB from a caller we are about to reject does not.
+ */
+async function requireWorkplaceToken(req, res, next) {
+  const token = req.header('x-workplace-token');
+  if (!token) return res.status(401).json({ error: 'Missing workplace token.' });
+  try {
+    const result = await wrkValidateWorkplaceToken(token);
+    if (!result.valid) return res.status(403).json({ error: 'Invalid workplace token.' });
+    return next();
+  } catch (e) {
+    log.error('workplace token check failed', { message: e.message });
+    return res.status(500).json({ error: 'Token validation failed.' });
+  }
+}
+
 app.post('/workplace/transcribe',
-  // Matches /workplace/log_response at 600/min. One request per answer, so a
-  // classroom of 25 moving together is ~25/min against this endpoint.
-  rateLimit({ windowMs: 60_000, max: 600, bucket: 'wp-transcribe' }),
+  // One request per answer, so a classroom of 25 moving together is ~25/min.
+  // Deliberately well below log_response's 600: this endpoint accepts 25MB a
+  // call and spends money on each one.
+  rateLimit({ windowMs: 60_000, max: 120, bucket: 'wp-transcribe' }),
+  // 404 rather than 403 while disabled — there is no reason to confirm the
+  // route exists to anyone probing for it.
+  (req, res, next) => (WORKPLACE_TRANSCRIBE_ENABLED ? next() : res.status(404).json({ error: 'Not found.' })),
   requireAccessKey,
+  requireWorkplaceToken,
   express.raw({
     type: ['audio/*', 'application/octet-stream', 'video/webm'],
     // Three minutes of Opus is well under a megabyte; MAX_RECORDING_MS caps
