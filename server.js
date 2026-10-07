@@ -658,10 +658,29 @@ const corsOptions = {
       'http://localhost:3001'
     ];
     if (!origin || allowed.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
+      return callback(null, true);
     }
+
+    // Preview deployments get generated origins that cannot be listed above:
+    // Vercel mints a new hostname per branch, so the allowlist can never
+    // contain them. Until this existed, every preview failed its first fetch
+    // with a CORS error — which is part of why nobody noticed previews were
+    // running on production credentials. They were never usable.
+    //
+    // GATED ON VERCEL_ENV ON PURPOSE. A preview frontend must never be able to
+    // call the PRODUCTION backend; that would defeat the whole environment
+    // split. On a production deployment this branch is dead code and the
+    // allowlist above is the only thing that answers.
+    //
+    // The preview backend holds only dev credentials and a dev Firebase
+    // project, so accepting Vercel-hosted origins there costs nothing worth
+    // protecting.
+    if (process.env.VERCEL_ENV && process.env.VERCEL_ENV !== 'production'
+        && /^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error('Not allowed by CORS'));
   },
   allowedHeaders: [
     'Content-Type',
