@@ -103,7 +103,8 @@ for (const name of COLLECTIONS) {
       if (!sessions.has(id)) {
         sessions.set(id, {
           section: d.section || '?',
-          school: d.school_id || '?',
+          // Workplace stores organization_id where climate stores school_id.
+          school: d.school_id || d.organization_id || '(none)',
           rows: 0, withText: 0, first: null, last: null,
         });
       }
@@ -157,6 +158,71 @@ line('TOTAL', {
 });
 console.log('\nsessions minus started = people who opened the link and left almost');
 console.log('immediately. started minus usable = runs that lost their transcripts.');
+
+// ── Before and after the transcript fixes ───────────────────────────────────
+//
+// The all-time table above is misleading on its own. Push-to-talk and the
+// architecture port reached teachers and the administrator interview first;
+// students, parents and staff ran months longer on server VAD, where long
+// answers were cut off and the transcript race discarded them. A lifetime
+// usable-rate therefore measures how long a role spent on the old build, not
+// whether it works now.
+//
+// 2026-09-15 is the cut: the commit that made response.create wait for the
+// transcript rather than race it (c428c82), after a 121-second answer was lost
+// by 0.1 seconds.
+//
+// Read the AFTER column. That is the one that predicts a district deployment.
+const FIX_DATE = new Date('2026-09-15T00:00:00Z');
+console.log(`\n=== BEFORE vs AFTER the transcript fixes (${FIX_DATE.toISOString().slice(0, 10)}) ===\n`);
+console.log('section                   before: started/usable      after: started/usable');
+console.log('-'.repeat(74));
+for (const sec of [...bySection.keys()]) {
+  const rows = all.filter((s) => s.section === sec && isReal(s));
+  const split = (pred) => {
+    const r = rows.filter(pred);
+    const u = r.filter(isFull).length;
+    return r.length ? `${String(r.length).padStart(3)} / ${String(u).padStart(3)}  (${String(Math.round((u / r.length) * 100)).padStart(3)}%)` : '      —        ';
+  };
+  console.log(`${sec.slice(0, 24).padEnd(24)}  ${split((s) => s.first < FIX_DATE)}      ${split((s) => s.first >= FIX_DATE)}`);
+}
+console.log('-'.repeat(74));
+console.log('A low BEFORE and a high AFTER means the fixes worked and the lifetime');
+console.log('figure is history. A low AFTER is the one that should stop a deployment.');
+
+// ── When did each role last fail, and has it run since? ─────────────────────
+//
+// A single cut date blurs the picture, because the fixes landed in waves rather
+// than on one day: push-to-talk reached teachers first, the other roles later,
+// and the transcript race was closed on 2026-09-15. The useful question is not
+// "before or after a date" but "when did this role last lose a transcript, and
+// has it run cleanly since?"
+//
+// A role whose last failure is months old and which has run cleanly since is
+// fixed. A role with no runs after its last failure is UNTESTED -- which is a
+// different thing from working, and the distinction matters before a district.
+console.log('\n=== Last failure per role, and what has happened since ===\n');
+console.log('section                   last FAILED run   last CLEAN run   clean runs since last failure');
+console.log('-'.repeat(92));
+for (const sec of [...bySection.keys()]) {
+  const rows = all.filter((s) => s.section === sec && isReal(s)).sort((a, b) => a.first - b.first);
+  const failed = rows.filter((s) => !isFull(s));
+  const clean = rows.filter(isFull);
+  const lastFail = failed.length ? failed[failed.length - 1].first : null;
+  const lastClean = clean.length ? clean[clean.length - 1].first : null;
+  const since = lastFail ? clean.filter((s) => s.first > lastFail).length : clean.length;
+  const d = (x) => (x ? x.toISOString().slice(0, 10) : '      —   ');
+  let verdict;
+  if (!lastFail) verdict = `${since} — never failed`;
+  else if (since === 0) verdict = '0 — UNTESTED since it last failed';
+  else if (since < 3) verdict = `${since} — thin evidence`;
+  else verdict = `${since} — looks fixed`;
+  console.log(`${sec.slice(0, 24).padEnd(24)}  ${d(lastFail).padEnd(16)}  ${d(lastClean).padEnd(15)}  ${verdict}`);
+}
+console.log('-'.repeat(92));
+console.log('UNTESTED is not the same as broken, and not the same as working. For those');
+console.log('roles the only way to know is to run one — which is what the dev environment');
+console.log('is for.');
 
 // ── Billing period ──────────────────────────────────────────────────────────
 const period = all.filter((s) => s.first >= SINCE);

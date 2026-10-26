@@ -68,7 +68,11 @@ const docs = [];
 for (const name of COLLECTIONS) {
   let q = db.collection(name);
   if (ONLY_SECTION) q = q.where('section', '==', ONLY_SECTION);
-  if (ONLY_SCHOOL) q = q.where('school_id', '==', ONLY_SCHOOL);
+  // Same split as above: the field is named differently per product, so filter
+  // on whichever one this collection uses.
+  if (ONLY_SCHOOL) {
+    q = q.where(name === 'workplace_climate' ? 'organization_id' : 'school_id', '==', ONLY_SCHOOL);
+  }
   try {
     const s = await q.get();
     console.log(`  ${name}: ${s.size} docs`);
@@ -96,7 +100,10 @@ for (const doc of snap.docs) {
   const id = d.session_id || '(no session)';
   if (!sessions.has(id)) {
     sessions.set(id, {
-      section: d.section || '?', school: d.school_id || '?',
+      // School climate writes school_id; workplace writes organization_id.
+      // Reading only the first rendered every workplace row as '?', which looked
+      // like missing data for four consecutive clean runs and wasn't.
+      section: d.section || '?', school: d.school_id || d.organization_id || '(none)',
       rows: 0, withText: 0, chars: 0, date: null, samples: [],
     });
   }
