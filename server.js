@@ -19,6 +19,7 @@ import Stripe from 'stripe';
 import PDFDocument from 'pdfkit';
 import { writeSessionToSupabase, writeWorkplaceSessionToSupabase } from './lib/writeToSupabase.js';
 import { scrubPII } from './lib/scrubPII.js';
+import { evaluateClimateWrite, isClimateSection } from './lib/climateTokenGuard.js';
 
 // ─── Structured Logger ────────────────────────────────────────────────────────
 async function shipLog(level, msg, meta = {}) {
@@ -866,6 +867,46 @@ app.get(
 // response is sent, so the setTimeout scheduled 4s later never reliably runs,
 // silently dropping the response. Removed 2026-08-10 — all responses now
 // write immediately, same as rated ones always did.
+/*
+ * Token lookup for climate writes, with a short in-process cache.
+ *
+ * Without it, enforcement costs one Firestore read per stored answer: a class
+ * of twenty-five answering nineteen questions is 475 extra reads, all for the
+ * same handful of tokens. The dashboard is already on manual refresh to keep
+ * reads down, so adding a per-answer read would undo that.
+ *
+ * 60 seconds, because the thing a cache must not do here is keep honouring a
+ * token an administrator has just deactivated. A minute of staleness is the
+ * trade; anything longer starts to matter. The Map lives in one serverless
+ * container and dies with it, which is fine — it is a cost optimisation, not
+ * state anything depends on.
+ */
+const CLIMATE_TOKEN_TTL_MS = 60_000;
+const climateTokenCache = new Map(); // token -> { at: epochMs, record: object|null }
+
+async function lookupClimateToken(token) {
+  if (!db) throw new Error('Clarity 360 Firestore not available');
+
+  const hit = climateTokenCache.get(token);
+  if (hit && Date.now() - hit.at < CLIMATE_TOKEN_TTL_MS) return hit.record;
+
+  const snap = await db.collection('climate_tokens')
+    .where('token', '==', token)
+    .limit(1)
+    .get();
+  const record = snap.empty ? null : snap.docs[0].data();
+
+  // Misses are cached too, so a scripted flood of invented tokens cannot turn
+  // into a Firestore read per attempt.
+  climateTokenCache.set(token, { at: Date.now(), record });
+  if (climateTokenCache.size > 500) {
+    for (const [k, v] of climateTokenCache) {
+      if (Date.now() - v.at >= CLIMATE_TOKEN_TTL_MS) climateTokenCache.delete(k);
+    }
+  }
+  return record;
+}
+
 app.post(
   '/log_response',
   // One write per answered question. A single participant produces roughly one
@@ -891,12 +932,59 @@ app.post(
       return res.status(503).json({ error: `${dbName} Firestore not available` });
     }
 
+    /*
+     * ── Token enforcement for school-climate writes ────────────────────────
+     *
+     * Added 2026-10-27. Until now this route accepted a climate answer with no
+     * token at all, and took school_id from the request body. The token was
+     * checked only in the browser, and requireAccessKey guards this route with
+     * CLARITY_ACCESS_KEY — which ships to every browser as
+     * NEXT_PUBLIC_CLARITY_KEY and is public. So the write path was effectively
+     * unauthenticated, and that is what produced the 2026-10-08 orphan write
+     * rather than any bypass of the client-side check.
+     *
+     * The rules are in lib/climateTokenGuard.js, with tests. This block only
+     * fetches the record and applies the verdict. Non-climate sections —
+     * superintendent_interview, find_my_purpose — return 'skip' and are
+     * untouched: they have no SCL- token and gating them would break the
+     * administrator interview and FMP on deploy.
+     */
+    let climateSchool = null;
+    if (isClimateSection(section)) {
+      const presented = typeof req.body.token === 'string'
+        ? req.body.token.trim().toUpperCase() : '';
+
+      let record = null;
+      if (presented) {
+        try {
+          record = await lookupClimateToken(presented);
+        } catch (e) {
+          log.error('climate token lookup failed', { message: e.message });
+          return res.status(500).json({ error: 'Token validation failed.' });
+        }
+      }
+
+      const verdict = evaluateClimateWrite({ section, token: presented, record });
+      if (verdict.action === 'reject') {
+        // Logged without the token itself: a refused token is still a secret,
+        // and the useful signal is that something wrote without a valid one.
+        log.warn('climate write refused', {
+          section, status: verdict.status, token_presented: Boolean(presented),
+        });
+        return res.status(verdict.status).json({ error: verdict.error });
+      }
+      if (verdict.action === 'allow') climateSchool = verdict.school;
+    }
+
     const doc = {
       session_id: session_id || 'unknown',
       section,
       question_id,
-      role: role || 'unknown',
-      school_id: school_id || 'unknown',
+      // For a climate write these come from the token record, not the body.
+      // Trusting a body-supplied school_id is what let a valid token for one
+      // school store answers against another.
+      role: (climateSchool && climateSchool.role) || role || 'unknown',
+      school_id: climateSchool ? climateSchool.school_id : (school_id || 'unknown'),
       ts: new Date().toISOString(),
     };
 
@@ -917,8 +1005,10 @@ app.post(
     } else if (section.startsWith('school_climate_')) {
       doc.rating = rating;
       doc.followup_text = scrubPII(followup_text || '');
-      if (req.body.school_name) doc.school_name = String(req.body.school_name).trim();
-      if (req.body.district) doc.district = String(req.body.district).trim();
+      // Both from the token record. The body's versions are ignored: a caller
+      // who can name the school can name any school.
+      if (climateSchool && climateSchool.school_name) doc.school_name = climateSchool.school_name;
+      if (climateSchool && climateSchool.district) doc.district = climateSchool.district;
       if (req.body.domain) doc.domain = String(req.body.domain).slice(0, 32);
       if (req.body.token) doc.token = String(req.body.token).slice(0, 20);
       if (req.body.response_mode === 'text') doc.response_mode = 'text';
