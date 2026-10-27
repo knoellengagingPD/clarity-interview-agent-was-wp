@@ -6857,7 +6857,20 @@ app.post('/api/generate-quantitative-report', requireAdminJWT, async (req, res) 
         ? doc.domain
         : getDomain(qid);
       const key = `${docRole}::${qid}`;
-      if (!questionBuckets[key]) questionBuckets[key] = { qid, role: docRole, ratings: [], domain };
+      if (!questionBuckets[key]) {
+        // Prefer the wording stored on the row. question_text has been written
+        // on every response since 2026-08-30 precisely so a row can be read
+        // without the frontend that produced it, and it survives an id change:
+        // the 2026-10-27 renumbering would otherwise have printed SC_STU_06 in
+        // place of the question on every new session's PDF, because
+        // QUESTION_TEXT_MAP below is keyed by the ids that renumbering retired.
+        questionBuckets[key] = {
+          qid, role: docRole, ratings: [], domain,
+          text: typeof doc.question_text === 'string' && doc.question_text.trim()
+            ? doc.question_text.trim()
+            : null,
+        };
+      }
       questionBuckets[key].ratings.push(rating);
     }
 
@@ -6997,8 +7010,11 @@ app.post('/api/generate-quantitative-report', requireAdminJWT, async (req, res) 
       },
     };
 
-    function getQuestionText(qid, qRole) {
-      return QUESTION_TEXT_MAP[qRole]?.[qid] || qid;
+    // stored wording -> retired-id map -> the id itself. The map is kept for
+    // pilot rows written before question_text existed; it is not maintained
+    // against the current survey and must not be relied on for new items.
+    function getQuestionText(qid, qRole, storedText) {
+      return storedText || QUESTION_TEXT_MAP[qRole]?.[qid] || qid;
     }
 
     function getDomain(qid) {
@@ -7044,9 +7060,9 @@ app.post('/api/generate-quantitative-report', requireAdminJWT, async (req, res) 
 
     let qNum = 1;
     for (const key of sortedBucketKeys) {
-      const { qid, role: bucketRole, ratings, domain } = questionBuckets[key];
+      const { qid, role: bucketRole, ratings, domain, text: storedText } = questionBuckets[key];
       const stats = computeStats(ratings);
-      let text = getQuestionText(qid, bucketRole);
+      let text = getQuestionText(qid, bucketRole, storedText);
       // In an "all roles" report, the same qid can legitimately appear once
       // per role (e.g. teachers' S1 and students' S1 are different
       // questions) — prefix with the role so the two rows are unambiguous.
