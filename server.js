@@ -20,7 +20,11 @@ import PDFDocument from 'pdfkit';
 import { writeSessionToSupabase, writeWorkplaceSessionToSupabase } from './lib/writeToSupabase.js';
 import { scrubPII } from './lib/scrubPII.js';
 import { evaluateClimateWrite, isClimateSection } from './lib/climateTokenGuard.js';
-import { isDebugOn, writeDebugTrace } from './lib/debugTrace.js';
+import { announceDebugState, isDebugOn, writeDebugTrace } from './lib/debugTrace.js';
+
+// Stated once, at import, so the Vercel log says which state the switch is in
+// rather than leaving "off" and "misconfigured" looking the same.
+announceDebugState();
 
 // ─── Structured Logger ────────────────────────────────────────────────────────
 async function shipLog(level, msg, meta = {}) {
