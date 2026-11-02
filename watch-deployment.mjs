@@ -133,7 +133,11 @@ const ago = (dt) => (dt ? Math.round((Date.now() - dt.getTime()) / 60000) : null
 
 function render(all) {
   const now = new Date();
-  console.clear?.();
+  // Only in --watch, where each refresh replaces the last and a screen full of
+  // stale panels is worse than none. A one-shot run must NOT clear: it throws
+  // away whatever the operator ran before it, which on 2026-11-01 was the
+  // check-debug-traces output someone wanted to read.
+  if (WATCH) console.clear?.();
   console.log('');
   console.log('='.repeat(72));
   console.log(`  ${SCHOOL}          ${now.toLocaleTimeString()}`);
