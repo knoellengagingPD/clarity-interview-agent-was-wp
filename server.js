@@ -20,6 +20,7 @@ import PDFDocument from 'pdfkit';
 import { writeSessionToSupabase, writeWorkplaceSessionToSupabase } from './lib/writeToSupabase.js';
 import { scrubPII } from './lib/scrubPII.js';
 import { evaluateClimateWrite, isClimateSection } from './lib/climateTokenGuard.js';
+import { isDebugOn, writeDebugTrace } from './lib/debugTrace.js';
 
 // ─── Structured Logger ────────────────────────────────────────────────────────
 async function shipLog(level, msg, meta = {}) {
@@ -845,7 +846,17 @@ app.get(
       }
 
       const data = await resp.json();
-      return res.json({ client_secret: { value: data.value }, url: 'https://api.openai.com/v1/realtime', model });
+
+      // Debugging Mode: this is the one place the feature changes an existing
+      // response, and it is how the browser learns whether to ship its trace.
+      // There is no second switch in the browser — it only ever echoes this.
+      //
+      // The key is appended, never inserted, and only when the gate is on, so
+      // with the switch off the response carries exactly the keys it carried
+      // before: client_secret, url, model.
+      const payload = { client_secret: { value: data.value }, url: 'https://api.openai.com/v1/realtime', model };
+      if (isDebugOn()) payload.debug = true;
+      return res.json(payload);
     } catch (e) {
       if (e.name === 'AbortError') {
         log.error('OpenAI session timeout');
@@ -1138,6 +1149,40 @@ app.post(
       log.error('Firestore write failed', { error: e.message, section, code: e.code });
       return res.status(500).json({ error: 'Failed to save response' });
     }
+  }
+);
+
+// ─── Debugging Mode: trace ingest ─────────────────────────────────────────────
+//
+// The browser posts batches of trace lines here when, and only when, /session
+// told it the switch was on. Write-only: nothing in the survey reads
+// debug_traces, and this route has no GET.
+//
+// It holds no participant text. The browser strips every double-quoted span
+// before batching, so a line arrives as PARTICIPANT [text: 22 chars]. The words
+// stay in `responses`, where scrubPII has already run on them.
+app.post(
+  '/debug/trace',
+  // Its own bucket, so a chatty debug client can never eat the budget
+  // /log_response depends on. Thirty students batching every 30s is about
+  // sixty a minute from one school IP; 300 leaves room for the pagehide
+  // beacons that all arrive together when a session ends.
+  rateLimit({ windowMs: 60_000, max: 300, bucket: 'debug-trace' }),
+  requireAccessKey,
+  async (req, res) => {
+    // Second gate. /session only tells the browser to send when the switch is
+    // on, but a stale tab or a replayed request must not write after it goes
+    // off. 404 rather than 403: with the switch off this route does not exist.
+    if (!isDebugOn()) return res.sendStatus(404);
+
+    const { session_id, seq, source, lines } = req.body || {};
+    await writeDebugTrace(db, { session_id, seq, source, lines });
+
+    // 204 whatever happened. The browser must not branch on whether the write
+    // landed, and a debug failure must never reach a participant. Oversized
+    // bodies never get here: express.json is capped at 50kb above, and the
+    // browser batches at 40kb.
+    return res.sendStatus(204);
   }
 );
 
