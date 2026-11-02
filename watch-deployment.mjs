@@ -1,0 +1,248 @@
+/**
+ * Is the deployment working RIGHT NOW?
+ *
+ * One command, for reading while standing in a school with a room full of
+ * people, not for analysis afterwards. cost-per-interview.mjs answers "how did
+ * it go"; this answers "do I stop".
+ *
+ *   node watch-deployment.mjs
+ *   node watch-deployment.mjs --school pps-2026-27
+ *   node watch-deployment.mjs --watch          # refresh every 60s until Ctrl-C
+ *   node watch-deployment.mjs --watch 30
+ *
+ * WHY A SEPARATE LIVE MEASURE
+ *
+ * cost-per-interview.mjs calls a session "started" at 10+ answers and "usable"
+ * at 80% carrying text. Those are the right thresholds for a finished run and
+ * the WRONG ones at 9:40am, because every session in the room is in progress
+ * and sitting at two or three answers. Judged by that rule a perfectly healthy
+ * morning reads as zero started, zero usable, which is exactly the shape of a
+ * catastrophe. Someone reading that under pressure stops a deployment that was
+ * fine.
+ *
+ * So the live rule is different, and deliberately so: a session with at least
+ * two stored answers and NOT ONE of them carrying text is already broken. You
+ * do not need to wait for the tenth answer to know transcripts are being lost,
+ * and waiting for it costs you eight more participants.
+ *
+ * WHAT IT COSTS TO RUN
+ *
+ * Filtered by school_id at the query, not read-everything-then-filter like the
+ * older scripts. `responses` is nearly five thousand documents and a district
+ * will add to it; a --watch loop that read the whole collection every minute
+ * would bill a few thousand reads a minute to look at thirty. Equality on a
+ * single field is indexed automatically, so this reads only the rows for the
+ * school being watched.
+ *
+ * Read-only. Touches nothing.
+ */
+
+import 'dotenv/config';
+import admin from 'firebase-admin';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const args = process.argv.slice(2);
+const argOf = (f) => {
+  const i = args.indexOf(f);
+  return i > -1 ? args[i + 1] : null;
+};
+const has = (f) => args.includes(f);
+
+const SCHOOL = argOf('--school') || 'pps-2026-27';
+const WATCH = has('--watch');
+const EVERY = Number(argOf('--watch')) > 0 ? Number(argOf('--watch')) : 60;
+
+/** A session is "active" if something was written this recently. */
+const ACTIVE_WINDOW_MIN = 15;
+
+/**
+ * Stored answers before silence counts as a fault rather than a slow start.
+ * Two, not one: a single blank can be someone who tapped a rating and had
+ * nothing to add, which is legitimate. Two in a row is a pattern.
+ */
+const BLANK_RUN_ALARM = 2;
+
+/**
+ * Answers needed before the percentage verdict means anything.
+ *
+ * The STOP rule above is exempt and deliberately so: two blanks in one session
+ * is a pattern whatever the totals say. This only governs the softer "x% carry
+ * text" judgement, which on tiny numbers swings between 0% and 100% on a
+ * single answer and would cry wolf in the first minutes of the morning.
+ */
+const MIN_SAMPLE = 5;
+
+function credentials() {
+  const b64 = process.env.FIREBASE_SERVICE_ACCOUNT_B64;
+  if (b64) return JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
+  const json = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  if (json) return JSON.parse(json);
+  const file = path.join(here, 'firebase-service-account.json');
+  if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf8'));
+  console.error('No Firebase credentials found.');
+  process.exit(1);
+}
+
+const sa = credentials();
+admin.initializeApp({
+  credential: admin.credential.cert(sa),
+  projectId: process.env.FIREBASE_PROJECT_ID || sa.project_id,
+});
+const db = admin.firestore();
+
+// Same accessors as cost-per-interview.mjs. Two names for the answer text
+// because both are in the data; two for the timestamp because ts_at was
+// backfilled later and older rows only carry the string.
+const textOf = (d) => (d.followup_text ?? d.text ?? '') || '';
+const when = (d) =>
+  d.ts_at?.toDate?.() ||
+  (typeof d.ts === 'string' ? new Date(d.ts) : null) ||
+  (d.ts?.toDate?.() ?? null);
+
+const ROLE = (section) => String(section || '?').replace('school_climate_', '');
+
+async function collect() {
+  const snap = await db.collection('responses').where('school_id', '==', SCHOOL).get();
+
+  const sessions = new Map();
+  for (const doc of snap.docs) {
+    const d = doc.data();
+    const id = d.session_id || '(no session)';
+    if (!sessions.has(id)) {
+      sessions.set(id, {
+        id, role: ROLE(d.section), token: d.token || null,
+        rows: 0, withText: 0, first: null, last: null,
+      });
+    }
+    const s = sessions.get(id);
+    s.rows += 1;
+    if (textOf(d).trim()) s.withText += 1;
+    const dt = when(d);
+    if (dt) {
+      if (!s.first || dt < s.first) s.first = dt;
+      if (!s.last || dt > s.last) s.last = dt;
+    }
+  }
+  return [...sessions.values()];
+}
+
+const ago = (dt) => (dt ? Math.round((Date.now() - dt.getTime()) / 60000) : null);
+
+function render(all) {
+  const now = new Date();
+  console.clear?.();
+  console.log('');
+  console.log('='.repeat(72));
+  console.log(`  ${SCHOOL}          ${now.toLocaleTimeString()}`);
+  console.log('='.repeat(72));
+
+  if (all.length === 0) {
+    console.log('');
+    console.log('  Nothing stored yet for this school.');
+    console.log('');
+    console.log('  Before Monday that is correct. During a session it is not —');
+    console.log('  check the school_id on the token people are actually using.');
+    console.log('');
+    return;
+  }
+
+  const broken = all.filter((s) => s.rows >= BLANK_RUN_ALARM && s.withText === 0);
+  const active = all.filter((s) => ago(s.last) !== null && ago(s.last) <= ACTIVE_WINDOW_MIN);
+  const answers = all.reduce((n, s) => n + s.rows, 0);
+  const withText = all.reduce((n, s) => n + s.withText, 0);
+  const share = answers ? Math.round((withText / answers) * 100) : 0;
+
+  // The verdict goes first and on its own, because it is the only line that
+  // will reliably get read.
+  console.log('');
+  if (broken.length) {
+    console.log(`  ⛔  STOP — ${broken.length} session(s) stored answers with NO text.`);
+    console.log('      This is the transcript failure. Participants will look fine');
+    console.log('      and their answers will be empty. Do not send more people in.');
+  } else if (answers === 0) {
+    console.log('  …   Sessions exist but nothing is stored yet.');
+  } else if (answers < MIN_SAMPLE) {
+    // Too early to judge. One blank at 9:02 is someone with nothing to add,
+    // and a warning here would arrive at exactly the moment it is most likely
+    // to be believed and least likely to be true.
+    console.log(`  …   ${answers} answer(s) so far — too few to judge. Check again shortly.`);
+  } else if (share >= 90) {
+    console.log(`  ✓   Healthy — ${withText} of ${answers} stored answers carry text (${share}%).`);
+  } else {
+    console.log(`  ⚠   ${share}% of stored answers carry text. Below 90% is worth a look`);
+    console.log('      before the next group goes in.');
+  }
+  console.log('');
+
+  console.log(`  sessions ${all.length}        active (last ${ACTIVE_WINDOW_MIN}m) ${active.length}`);
+  const last = all.map((s) => s.last).filter(Boolean).sort((a, b) => b - a)[0];
+  console.log(`  answers  ${answers}        last activity ${last ? `${ago(last)} min ago` : '—'}`);
+  console.log('');
+
+  // ── By role ───────────────────────────────────────────────────────────────
+  const byRole = new Map();
+  for (const s of all) {
+    if (!byRole.has(s.role)) byRole.set(s.role, { n: 0, rows: 0, text: 0, blank: 0 });
+    const r = byRole.get(s.role);
+    r.n += 1; r.rows += s.rows; r.text += s.withText;
+    if (s.rows >= BLANK_RUN_ALARM && s.withText === 0) r.blank += 1;
+  }
+  console.log('  role        sessions   answers   w/text   blank runs');
+  console.log('  ' + '-'.repeat(54));
+  for (const [role, r] of [...byRole].sort((a, b) => b[1].n - a[1].n)) {
+    const pct = r.rows ? `${Math.round((r.text / r.rows) * 100)}%` : '—';
+    console.log(
+      `  ${role.padEnd(12)}${String(r.n).padStart(6)}${String(r.rows).padStart(10)}`
+      + `${String(r.text).padStart(9)} (${pct.padStart(4)})${String(r.blank || '').padStart(7)}`,
+    );
+  }
+  console.log('');
+
+  // ── Anything broken, named ────────────────────────────────────────────────
+  if (broken.length) {
+    console.log('  Sessions that stored nothing but blanks:');
+    for (const s of broken.sort((a, b) => b.last - a.last)) {
+      console.log(`    ${s.id}  ${s.role}  ${s.rows} answers  ${ago(s.last)} min ago`);
+    }
+    console.log('');
+    console.log('    node verify-student-run.mjs   # for the detail on one of them');
+    console.log('');
+  }
+
+  // ── In progress, so you can see the room ──────────────────────────────────
+  if (active.length) {
+    console.log(`  In progress (wrote something in the last ${ACTIVE_WINDOW_MIN} minutes):`);
+    for (const s of active.sort((a, b) => b.last - a.last).slice(0, 12)) {
+      const pct = s.rows ? Math.round((s.withText / s.rows) * 100) : 0;
+      const flag = s.rows >= BLANK_RUN_ALARM && s.withText === 0 ? '  ⛔' : '';
+      console.log(
+        `    ${s.role.padEnd(10)} ${String(s.rows).padStart(2)} answers, `
+        + `${String(pct).padStart(3)}% with text   ${ago(s.last)}m ago${flag}`,
+      );
+    }
+    if (active.length > 12) console.log(`    …and ${active.length - 12} more`);
+    console.log('');
+  }
+
+  console.log('='.repeat(72));
+  if (WATCH) console.log(`  refreshing every ${EVERY}s — Ctrl-C to stop`);
+  console.log('');
+}
+
+async function once() {
+  try {
+    render(await collect());
+  } catch (e) {
+    console.error(`\n  could not read: ${e.message}\n`);
+  }
+}
+
+await once();
+if (WATCH) {
+  setInterval(once, EVERY * 1000);
+} else {
+  process.exit(0);
+}
