@@ -182,3 +182,175 @@ Turning the switch on in Production and running "one test interview" writes real
 rows to a real `school_id`. Use a token minted under `zz-test-pps-devices-2026-11`,
 not a Pleasanton one. Pleasanton's live deployment is `pps-2026-27`, and its
 teacher group is small enough that a few test rows would move the averages.
+
+---
+
+## Steps 3 and 4 are built, merged, and ON in production
+
+Written 2026-11-01, the night before Pleasanton opens. Chris needed Debugging
+Mode live for the deployment rather than after it, so this did not wait for
+review. Everything below is on `main` in both repos and deployed.
+
+| | |
+|---|---|
+| Backend | `30a7c74` — gate, writer, `/debug/trace`, `/session` flag |
+| Frontend | `9b385bc` — gate, redactor, shipper, collectors |
+| Switch | `CLARITY_DEBUG_TRACE=on`, Production, set via CLI |
+| Window | Pleasanton `pps-2026-27`, 2–10 November |
+
+**To turn it off:** set the variable to anything but `on` and redeploy the
+backend. `/session` stops emitting `debug`, the browser gate stays false, every
+collector becomes an early return, and `/debug/trace` answers 404. About three
+minutes end to end. No frontend change is needed to kill it.
+
+### Step 3 — the shipper
+
+`workplace-interview-agent/src/lib/interview/debugShipper.ts`.
+
+Batches redacted lines and POSTs `{ session_id, seq, source: 'client', lines }`.
+Two rules it is built around, both worth preserving if you refactor it:
+
+**It never throws.** Every exported function is wrapped, every await caught. A
+diagnostic that can interrupt an interview is worse than no diagnostic. There is
+a test that asserts a rejecting `fetch` does not reject into the caller.
+
+**Redaction happens on the way in, not on the way out.** `shipTraceLine` redacts
+before the line enters the buffer, so raw speech never sits in memory waiting to
+be sent and no future call site can forget.
+
+`fetch(keepalive)` rather than `navigator.sendBeacon` for the final flush:
+sendBeacon cannot set headers, and `/debug/trace` sits behind `requireAccessKey`,
+so every beacon would 401. The last batch of a session is the one most likely to
+explain why it ended.
+
+A 404 stops the session — the switch is off server-side and there is nothing to
+retry. Three consecutive failures also stop it, rather than retrying on a
+participant's connection during an interview that still has to work.
+
+Preamble blocks: `BUILD` (commit, ref, env) and `DEVICE` (ua, cores, memory,
+effective connection, mediaDevices and RTCPeerConnection presence, viewport,
+secure context). **Device labels are never read.** `enumerateDevices()` returns
+strings like "Chris's AirPods"; whether a device exists and permission was
+granted is the useful part and is available without the label.
+
+Known gap: `BUILD` currently reports `commit unknown`. Next only inlines
+`NEXT_PUBLIC_`-prefixed variables into the browser bundle and Vercel's git
+variables are not prefixed. Fixed by adding `NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA`
+to the frontend project. Cosmetic, left alone before the deployment.
+
+### Step 4 — the collectors
+
+All five interview pages. `/session` now returns `debug`, which remains the only
+thing that can open the browser gate. `setDebugEnabled` and `startDebugShipper`
+run at the call site before any trace line exists, so the preamble is first and
+nothing earlier is dropped. `trace()` offers every line to the shipper from its
+single existing call site — which is what makes a `trace()` added next month
+collected by default rather than forgotten.
+
+### Your three hardening suggestions
+
+From the "Design concern for steps 3 and 4" section above:
+
+1. **Drop any line that still contains a quote** — done, in `redactBatch`.
+2. **Cap every detail field** — done, but only for an allowlist of kinds known to
+   carry speech (`PARTICIPANT`, `CLARITY`, `TAIL`, `skipped`, `held`, `parsed`,
+   `RESCUED`), and only when the quote rule did **not** fire. Capping an already
+   redacted line truncates the diagnostic words that are the reason for keeping
+   it: `too short to be an elaboration ([text: 2 chars]) — likely noise` is longer
+   than the cap and contains no speech at all.
+3. **Allowlist which fields may ship** — not done. Instead, audited.
+
+**The audit, because the `held` hole you identified deserved a measurement
+rather than a guess.** Every `trace()` call across all five pages, every template
+interpolation not wrapped in quote characters: **31 of them, and not one carries
+free text.** They are question ids, numeric scores, durations, counts, booleans,
+and one `String(err)` from the audio API. `held → heard` is the only
+participant-derived value and it is a single parsed rating word inside the cap.
+
+So the structural risk you named is real and remains real — the allowlist is
+hand-maintained and the next unquoted line leaks silently — but there is nothing
+leaking today. Worth re-running that audit whenever trace lines are added.
+
+### Two deviations from the spec, both deliberate
+
+**The switch is now case-insensitive.** The spec's `=== 'on'` meant `ON`, `On`
+and ` on ` all left Debugging Mode off — silently, because off is also the normal
+state. It would have been discovered by looking for traces that were never
+captured, after the interviews they existed to explain. Still only the word
+"on", trimmed and lowercased; `true`, `1` and `yes` remain off so a stray config
+value cannot enable it by accident. `announceDebugState()` now logs the resolved
+state once at import, via `console.*` for the recursion reason, so the Vercel log
+distinguishes "off" from "misconfigured".
+
+**Flush interval is 30s, not 10s.** Measured rather than assumed — see below.
+
+### Verification, on real runs
+
+Both sessions are `zz-test-pps-devices-2026-11`, per the operational note above.
+No Pleasanton rows were touched.
+
+| | `sclst-0f924668` | `sclst-f0666492` |
+|---|---|---|
+| Flush interval | 10s | 30s |
+| Duration | 120s | 83s |
+| Documents | 11 | 4 |
+| Lines | 47 | 35 |
+| Lines per document | 4.3 | 8.75 |
+| seq gaps | none | none |
+| Quotes surviving | none | none |
+
+**Redaction confirmed against real transcription, not fixtures.** The local
+download of the first session has 47 content lines and three `PARTICIPANT` lines
+carrying full sentences. The server copy has 47 lines and zero quotes. Nothing
+was lost and nothing leaked.
+
+**`pagehide` works.** The first session was ended by closing the tab mid-interview
+and the final partial batch still arrived — line counts match exactly.
+
+**Why the interval changed.** At 10s the timer fired on nearly every burst of
+trace lines and `BATCH_SIZE` almost never fired at all. Extrapolated, a
+15.6-minute interview is ~120 documents and a 33-minute one reaches
+`MAX_DOCS_PER_SESSION`, at which point the shipper goes quiet silently and the
+*end* of the longest sessions is what gets lost — the worst part to lose, since a
+participant who runs long is both the likeliest to and the most worth having a
+trace for. At 30s the same interview is ~40 documents, and 200 participants cost
+Firestore roughly a thousand writes instead of three thousand. Nothing reads this
+collection live, so the delay costs nobody anything.
+
+### Tooling added since
+
+**`watch-deployment.mjs`** (read-only). One command answering "is it working
+right now", for reading in a school rather than afterwards.
+
+```
+node watch-deployment.mjs                    # one shot
+node watch-deployment.mjs --watch 60         # refresh until Ctrl-C
+node watch-deployment.mjs --school <id>
+```
+
+The live rule deliberately differs from `cost-per-interview.mjs`, and the reason
+may interest you: that script calls a session started at 10+ answers and usable
+at 80% text, which is correct for a finished run and wrong at 9:40am when every
+session in the room sits at two or three answers. Judged by that rule a healthy
+morning reads as zero started, zero usable — the exact shape of a catastrophe.
+So the live rule is: **two or more stored answers and not one carrying text means
+already broken.** The softer percentage verdict is withheld below five answers so
+a single blank cannot raise an alarm in the first minutes of the day.
+
+Queries are filtered by `school_id` at the query rather than read-everything-
+then-filter like the older scripts — `responses` is ~4,750 documents and a
+`--watch` loop reading all of it every minute would bill thousands of reads to
+look at thirty.
+
+### Open for you
+
+- `NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA` so `BUILD` reports a real commit.
+- The server-side collectors. Everything shipped so far is `source: 'client'`;
+  nothing writes `source: 'server'` yet, so route timings, token verdicts, Claude
+  usage and write durations are still uncaptured. That was the original
+  justification for the feature and it is the remaining half.
+- Better Stack, untouched. Both leak sites are still live — the one you flagged
+  and the FMP reminder success path documented above.
+- Whether the per-instance caps should ever become exact. They are approximate on
+  multi-instance serverless by design; worth revisiting only if a district is
+  large enough for the daily cap to bind, which Pleasanton is not.
