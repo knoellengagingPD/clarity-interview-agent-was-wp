@@ -376,7 +376,12 @@ function render(all, orphans = []) {
   }
 
   console.log('='.repeat(72));
-  if (WATCH) console.log(`  refreshing every ${EVERY}s — Ctrl-C to stop`);
+  if (WATCH) {
+    const every = EVERY >= 3600 ? `${Math.round(EVERY / 3600)}h`
+      : EVERY >= 60 ? `${Math.round(EVERY / 60)} min`
+        : `${EVERY}s`;
+    console.log(`  refreshing every ${every} — press Enter to refresh now, Ctrl-C to stop`);
+  }
   console.log('');
 }
 
@@ -400,6 +405,23 @@ async function once() {
 await once();
 if (WATCH) {
   setInterval(once, EVERY * 1000);
+
+  /*
+   * Enter refreshes now.
+   *
+   * A long interval is right for cost — at an hour this reads a few hundred
+   * documents a day instead of millions — but it is wrong for the moment
+   * somebody says "a parent just told me she finished it". Without this the
+   * only way to look is Ctrl-C and restart, which loses the running watch and
+   * discourages checking at all.
+   *
+   * Plain flowing mode, deliberately NOT setRawMode: raw mode would swallow
+   * Ctrl-C, and a monitor you cannot quit is worse than one you cannot
+   * refresh.
+   */
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', () => { void once(); });
+  if (process.stdin.isTTY) process.stdin.resume();
 } else {
   process.exit(0);
 }
