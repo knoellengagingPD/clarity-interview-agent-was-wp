@@ -51,7 +51,23 @@ const argOf = (f) => {
 };
 const has = (f) => args.includes(f);
 
-const SCHOOL = argOf('--school') || 'pps-2026-27';
+/*
+ * Schools to watch, comma-separated.
+ *
+ * The default is BOTH Pleasanton buckets, because for this deployment the
+ * district's answers are arriving in two places: teachers, staff and students
+ * on the live tokens into pps-2026-27, and parents on a mis-sent test token
+ * into zz-test-pps-devices-2026-11. Watching one of them shows you half a
+ * deployment and no indication that the other half exists — which, on the
+ * morning the parent email went out, would read as "parents aren't responding"
+ * rather than "parents are landing somewhere else".
+ *
+ * Two indexed equality queries, so the cost is the rows returned, not the
+ * collection scanned.
+ */
+const SCHOOLS = (argOf('--school') || 'pps-2026-27,zz-test-pps-devices-2026-11')
+  .split(',').map((s) => s.trim()).filter(Boolean);
+const SCHOOL = SCHOOLS[0];          // kept for the header when there is only one
 const WATCH = has('--watch');
 const EVERY = Number(argOf('--watch')) > 0 ? Number(argOf('--watch')) : 60;
 
@@ -187,15 +203,23 @@ async function findOrphans(storedSessionIds) {
 }
 
 async function collect() {
-  const snap = await db.collection('responses').where('school_id', '==', SCHOOL).get();
-
   const sessions = new Map();
+  // One indexed query per school, merged. A session cannot span two schools, so
+  // there is nothing to reconcile — but each session remembers which school it
+  // came from, because "which bucket did the parents land in" is the question
+  // this whole mode exists to answer.
+  const snaps = await Promise.all(
+    SCHOOLS.map((s) => db.collection('responses').where('school_id', '==', s).get()),
+  );
+
+  for (const snap of snaps) {
   for (const doc of snap.docs) {
     const d = doc.data();
     const id = d.session_id || '(no session)';
     if (!sessions.has(id)) {
       sessions.set(id, {
         id, role: ROLE(d.section), token: d.token || null,
+        school: d.school_id || '(none)',
         rows: 0, withText: 0, first: null, last: null,
       });
     }
@@ -207,6 +231,7 @@ async function collect() {
       if (!s.first || dt < s.first) s.first = dt;
       if (!s.last || dt > s.last) s.last = dt;
     }
+  }
   }
   return [...sessions.values()];
 }
@@ -222,12 +247,12 @@ function render(all, orphans = []) {
   if (WATCH) console.clear?.();
   console.log('');
   console.log('='.repeat(72));
-  console.log(`  ${SCHOOL}          ${now.toLocaleTimeString()}`);
+  console.log(`  ${SCHOOLS.join('  +  ')}          ${now.toLocaleTimeString()}`);
   console.log('='.repeat(72));
 
   if (all.length === 0 && orphans.length === 0) {
     console.log('');
-    console.log('  Nothing stored yet for this school.');
+    console.log(`  Nothing stored yet in ${SCHOOLS.length > 1 ? 'either school' : 'this school'}.`);
     console.log('');
     console.log('  Correct before anyone has started. If people are taking it right now,');
     console.log('  they are writing to a different school_id — check the link they used.');
@@ -281,6 +306,29 @@ function render(all, orphans = []) {
   const last = all.map((s) => s.last).filter(Boolean).sort((a, b) => b - a)[0];
   console.log(`  answers  ${answers}        last activity ${last ? `${ago(last)} min ago` : '—'}`);
   console.log('');
+
+  // ── By school, when watching more than one ────────────────────────────────
+  //
+  // The combined totals above are what you want day to day. This line is what
+  // you want when a number looks wrong, because "which bucket is this landing
+  // in" is the question behind most of them.
+  if (SCHOOLS.length > 1) {
+    const bySchool = new Map();
+    for (const s of all) {
+      if (!bySchool.has(s.school)) bySchool.set(s.school, { n: 0, rows: 0 });
+      const b = bySchool.get(s.school);
+      b.n += 1; b.rows += s.rows;
+    }
+    for (const school of SCHOOLS) {
+      const b = bySchool.get(school) || { n: 0, rows: 0 };
+      const roles = [...new Set(all.filter((s) => s.school === school).map((s) => s.role))];
+      console.log(
+        `  ${school.padEnd(32)} ${String(b.rows).padStart(4)} answers`
+        + `${roles.length ? `   (${roles.sort().join(', ')})` : ''}`,
+      );
+    }
+    console.log('');
+  }
 
   // ── By role ───────────────────────────────────────────────────────────────
   const byRole = new Map();
