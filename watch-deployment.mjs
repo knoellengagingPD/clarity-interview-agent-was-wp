@@ -245,7 +245,11 @@ function render(all, orphans = []) {
   // will reliably get read.
   console.log('');
   if (orphans.length) {
+    // Said every time: an orphan has no school_id, so this list cannot be
+    // filtered to the school being watched and will appear under all of them.
+    // Without this line it reads as "a participant from THIS school was lost".
     console.log(`  ⚠   ${orphans.length} interview(s) RAN but stored nothing — almost certainly a bad link.`);
+    console.log(`      (Across all schools — an orphan has no school to file under.)`);
     for (const o of orphans.sort((a, b) => b.last - a.last)) {
       const mins = o.first && o.last ? Math.round((o.last - o.first) / 60000) : 0;
       console.log(`      ${o.id}  ${ROLE_FROM_ID(o.id)}  ${o.lines} trace lines, ${mins} min, ${ago(o.last)} min ago`);
