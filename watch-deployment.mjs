@@ -229,8 +229,8 @@ function render(all, orphans = []) {
     console.log('');
     console.log('  Nothing stored yet for this school.');
     console.log('');
-    console.log('  Before Monday that is correct. During a session it is not —');
-    console.log('  check the school_id on the token people are actually using.');
+    console.log('  Correct before anyone has started. If people are taking it right now,');
+    console.log('  they are writing to a different school_id — check the link they used.');
     console.log('');
     return;
   }
