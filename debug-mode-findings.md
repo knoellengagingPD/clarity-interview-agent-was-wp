@@ -380,9 +380,17 @@ What happened next:
    `school_id` and the server-side guard rejects all of them.
 6. Clarity delivers the closing and tells them to submit.
 
-Cost on 2026-11-03: a complete 19-question parent interview, eleven minutes,
-nineteen substantial answers. `captured 19 of 19, missing (none)` in the
-downloaded trace. Nothing stored. The participant had no way to know.
+**No participant has hit this.** It was found in Chris's own test on the night
+of the 2nd — a complete 19-question parent run on an iPhone, eleven minutes,
+`captured 19 of 19, missing (none)` in the downloaded trace, and not one row
+stored. The real parent interview that arrived the next morning stored
+correctly.
+
+That matters for how you prioritise it, so: the severity is what it *would*
+cost, not what it has. A participant hitting this gives up fifteen minutes,
+sees the closing, is told to submit, and has no way to know. You would not find
+out from them, and until the orphan detector below existed you would not have
+found out at all.
 
 The validation was never broken. The pre-interview modals were added later and
 do not check whether the page is in an error state.
