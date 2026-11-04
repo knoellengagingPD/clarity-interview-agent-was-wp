@@ -69,6 +69,17 @@ const SCHOOLS = (argOf('--school') || 'pps-2026-27,zz-test-pps-devices-2026-11')
   .split(',').map((s) => s.trim()).filter(Boolean);
 const SCHOOL = SCHOOLS[0];          // kept for the header when there is only one
 const WATCH = has('--watch');
+
+/**
+ * Optional JSON mirror of the panel. Relative paths resolve against this
+ * script's folder rather than the shell's cwd, so `--out status.json` lands
+ * next to the script wherever it was run from — which matters, because a
+ * terminal that has just been opened is in the home folder, and that has
+ * caught us out three times already.
+ */
+const OUT = argOf('--out')
+  ? path.resolve(path.isAbsolute(argOf('--out')) ? argOf('--out') : path.join(here, argOf('--out')))
+  : null;
 const EVERY = Number(argOf('--watch')) > 0 ? Number(argOf('--watch')) : 60;
 
 /** A session is "active" if something was written this recently. */
@@ -385,6 +396,91 @@ function render(all, orphans = []) {
   console.log('');
 }
 
+/* ── --out ─────────────────────────────────────────────────────────────────── */
+
+/**
+ * Write the same picture to a JSON file.
+ *
+ * WHY
+ *
+ * The panel is for a person at a terminal. This is for anything that is not:
+ * another tool, a later question, or an assistant that can read the repo
+ * folder but cannot reach Firestore. With a watch running, "has anything
+ * happened?" becomes reading one small file instead of re-running a query —
+ * or re-pasting a terminal.
+ *
+ * WHAT IT DELIBERATELY DOES NOT CONTAIN
+ *
+ * Any participant text. Counts, roles, session ids, timestamps and the
+ * verdict — the same things the panel shows. The answers live in `responses`,
+ * where scrubPII has run on them, and this file is checked into a working
+ * folder, so there is no version of including them that is worth the risk.
+ *
+ * Written atomically via a temp file and rename, so a reader can never catch a
+ * half-written document — the whole point is that something else reads this
+ * while it is being produced.
+ */
+function writeStatus(all, orphans) {
+  if (!OUT) return;
+  try {
+    const answers = all.reduce((n, s) => n + s.rows, 0);
+    const withText = all.reduce((n, s) => n + s.withText, 0);
+    const broken = all.filter((s) => s.rows >= BLANK_RUN_ALARM && s.withText === 0);
+
+    const byRole = {};
+    for (const s of all) {
+      const r = (byRole[s.role] ||= { sessions: 0, answers: 0, with_text: 0, blank_runs: 0 });
+      r.sessions += 1; r.answers += s.rows; r.with_text += s.withText;
+      if (s.rows >= BLANK_RUN_ALARM && s.withText === 0) r.blank_runs += 1;
+    }
+
+    const bySchool = {};
+    for (const s of all) {
+      const b = (bySchool[s.school] ||= { sessions: 0, answers: 0 });
+      b.sessions += 1; b.answers += s.rows;
+    }
+
+    const verdict = broken.length ? 'STOP'
+      : answers === 0 ? 'nothing stored yet'
+        : answers < MIN_SAMPLE ? 'too few to judge'
+          : (withText / answers) >= 0.9 ? 'healthy' : 'low text share';
+
+    const doc = {
+      generated_at: new Date().toISOString(),
+      schools: SCHOOLS,
+      verdict,
+      totals: {
+        sessions: all.length,
+        answers,
+        with_text: withText,
+        text_share: answers ? Math.round((withText / answers) * 100) : null,
+        active_last_15m: all.filter((s) => ago(s.last) !== null && ago(s.last) <= ACTIVE_WINDOW_MIN).length,
+        last_activity: all.map((s) => s.last).filter(Boolean).sort((a, b) => b - a)[0]?.toISOString() ?? null,
+      },
+      by_school: bySchool,
+      by_role: byRole,
+      // Named, because when one of these appears the next question is always
+      // "which one" and the id is what every other tool here takes.
+      blank_runs: broken.map((s) => ({ session_id: s.id, role: s.role, answers: s.rows })),
+      orphans: orphans.map((o) => ({
+        session_id: o.id,
+        role: ROLE_FROM_ID(o.id),
+        trace_lines: o.lines,
+        minutes: o.first && o.last ? Math.round((o.last - o.first) / 60000) : null,
+        last: o.last?.toISOString() ?? null,
+      })),
+    };
+
+    const tmp = `${OUT}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(doc, null, 2) + '\n');
+    fs.renameSync(tmp, OUT);
+  } catch (e) {
+    // A status file that cannot be written must not take the panel down with
+    // it. The person watching the terminal is the primary reader.
+    console.log(`  (could not write ${OUT}: ${e.message})`);
+  }
+}
+
 async function once() {
   try {
     const all = await collect();
@@ -397,6 +493,7 @@ async function once() {
       orphans = [];
     }
     render(all, orphans);
+    writeStatus(all, orphans);
   } catch (e) {
     console.error(`\n  could not read: ${e.message}\n`);
   }
