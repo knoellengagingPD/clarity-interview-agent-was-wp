@@ -354,3 +354,120 @@ look at thirty.
 - Whether the per-instance caps should ever become exact. They are approximate on
   multi-instance serverless by design; worth revisiting only if a district is
   large enough for the daily cap to bind, which Pleasanton is not.
+
+---
+
+## Day two of Pleasanton: what Debugging Mode caught
+
+Written 2026-11-03, with the window open. Four findings, one of them a defect
+that silently destroys completed interviews and is worth your attention before
+anything else on this list.
+
+### 1. A full interview can run on a token that does not resolve, and store nothing
+
+**Reproduced on desktop Chrome. Not browser-specific, not a race — deterministic.**
+
+A parent link picked up a stray character in transit (`?token=SCL-DL3SW4%20l`).
+What happened next:
+
+1. The page looks the token up. The backend returns **404**, correctly.
+2. The page handles that correctly too — dispatches `SET_ERROR` and renders
+   "⚠️ Interview Link Issue — Token not found".
+3. **Two modals render on top of that error screen**: the tips modal, then
+   "What to Expect" with the "I'm Ready — Begin Interview" button.
+4. The participant clicks through both, never sees the error, and begins.
+5. `schoolIdRef` is never assigned, so every write carries an empty
+   `school_id` and the server-side guard rejects all of them.
+6. Clarity delivers the closing and tells them to submit.
+
+Cost on 2026-11-03: a complete 19-question parent interview, eleven minutes,
+nineteen substantial answers. `captured 19 of 19, missing (none)` in the
+downloaded trace. Nothing stored. The participant had no way to know.
+
+The validation was never broken. The pre-interview modals were added later and
+do not check whether the page is in an error state.
+
+**Suggested fix, smallest first:** do not render the modals when
+`screen === 'error'`. The error screen already exists and is already correct —
+it just needs to be the thing on top. That is a render condition, not new
+logic. Belt and braces would be refusing to write a response with an empty
+`school_id`, so a session that cannot be attributed fails loudly in the first
+thirty seconds rather than silently at minute eleven.
+
+**To reproduce:** open any climate page with a deliberately damaged token, e.g.
+`/school-climate/parents?token=SCL-ANYTHING%20x`, and click through both
+modals. `get_page_text` shows the error screen rendering underneath.
+
+### 2. The token lookup endpoint is unauthenticated
+
+`GET /school-climate/token/:token` returns `role`, `school_name`, `school_id`
+and `district` with no access key. Found by accident — a `curl` ran with an
+unset `$K` and still returned data.
+
+Low severity: the token is itself the secret, and anyone holding one could read
+the school off the page anyway. Worth a decision rather than leaving it
+undecided, since it is the one endpoint that maps a token to a district.
+
+### 3. Debugging Mode was the only witness to the lost interview
+
+Worth knowing because it is an argument for the feature rather than a defect.
+
+Everything that monitors this deployment counts stored rows. An interview that
+stores nothing is invisible to all of it — it leaves no response, no
+`climate_sessions` summary, nothing. The *only* record that the lost parent
+interview ever happened is 22 documents in `debug_traces`.
+
+That turned into a detector. `watch-deployment.mjs` now takes the sessions that
+shipped trace lines, subtracts those that stored answers, and reports what is
+left:
+
+```
+⚠  1 interview(s) RAN but stored nothing — almost certainly a bad link.
+   sclpar-6c6df907  parents  245 trace lines, 11 min, 59 min ago
+```
+
+Sessions under 20 trace lines are ignored — the preamble alone is 7 or 9, so
+anything near that is someone opening a link and leaving.
+
+### 4. The DEVICE preamble fingerprints the rendering engine, by accident
+
+`deviceMemory` and `navigator.connection` are Chromium-only. Safari omits both,
+so the preamble is **7 lines on WebKit and 9 on Chromium**. That turned out to
+be the fastest way to tell an iPhone session from a laptop one without reading
+any content, and it identified which of two abandoned sessions came from a
+Chromebook.
+
+Unintended, but worth not breaking.
+
+### Still open from the earlier list
+
+- **The first trace line of every session never ships.** `trace('READY', …)`
+  fires when the tips modal is dismissed; `startDebugShipper()` runs inside
+  `startRealtimeSession()`, which is later. So `READY` is written to the local
+  buffer before the shipper exists and is dropped from the shipped copy. My
+  commit message claimed otherwise and was wrong — the Chromebook trace proves
+  it. Fix is to replay whatever is already in `traceRef` immediately after the
+  shipper starts.
+- **`BUILD commit unknown`** — needs `NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA` on the
+  frontend project.
+- **The server-side collectors.** Everything shipping is still `source:
+  'client'`. Route timings, token verdicts, Claude usage and write durations —
+  the original justification for the feature — remain uncaptured.
+- **One API race at the end of a long interview**, recovered cleanly:
+  `Conversation already has an active response in progress: resp_…`. Seen once,
+  at the closing, after the final open question. Harmless so far.
+
+### Tooling added today
+
+**`repoint-token.mjs`** — points a survey token at a different school, so a link
+already sitting in people's inboxes becomes the right link rather than needing
+a correction email. Writes `school_id`, `school_name`, `district` and
+`is_test`; deliberately never `role`, since the write guard depends on it.
+`--like <token>` copies from a known-good token and refuses if that token is
+flagged test or carries a different role. Dry run by default, and it prints the
+before state as a restore point ahead of the write rather than after it.
+
+Note for whenever you touch token handling: `school_name` is interpolated into
+Clarity's instructions — *"You are interviewing a parent or guardian of a
+student at ${schoolName}"* — so a token pointing at a test school is one
+participant question away from saying so out loud.
