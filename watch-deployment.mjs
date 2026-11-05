@@ -279,6 +279,36 @@ function render(all, orphans = []) {
 
   // The verdict goes first and on its own, because it is the only line that
   // will reliably get read.
+  /*
+   * Answers landing in a non-production bucket.
+   *
+   * Twice in one deployment an invitation went out carrying a device-test
+   * token — parents on 2 November, staff on 5 November — and real answers
+   * filed under zz-test-pps-devices-2026-11, where no report would find them.
+   * Both times the information was already on this screen, in the by-school
+   * line, and both times it took somebody deciding to look.
+   *
+   * A number in a table is not a warning. This is.
+   *
+   * Keyed on the zz- prefix rather than the is_test flag: the flag lives on
+   * the token and gets cleared when the token is repointed, but school_id is
+   * stamped on every row and is what reports group by. The rows are the thing
+   * that is actually in the wrong place.
+   */
+  const strays = all.filter((s) => /^zz-/i.test(s.school) && s.rows > 0);
+  if (strays.length) {
+    const rows = strays.reduce((n, s) => n + s.rows, 0);
+    const buckets = [...new Set(strays.map((s) => s.school))];
+    const roles = [...new Set(strays.map((s) => s.role))].sort();
+    console.log('');
+    console.log(`  ⛔  ${rows} answer(s) are in a TEST bucket — ${roles.join(', ')}.`);
+    for (const b of buckets) console.log(`      ${b}`);
+    console.log('      An invitation almost certainly went out with a test token.');
+    console.log('      Repoint it so new arrivals land correctly, then move these:');
+    console.log('        node repoint-token.mjs SCL-XXXXXX --like <the live one>');
+    console.log('        node move-session.mjs <session_id> pps-2026-27');
+  }
+
   console.log('');
   if (orphans.length) {
     // Said every time: an orphan has no school_id, so this list cannot be
