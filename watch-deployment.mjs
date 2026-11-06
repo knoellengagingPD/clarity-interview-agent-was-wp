@@ -304,9 +304,17 @@ function render(all, orphans = []) {
     console.log(`  ⛔  ${rows} answer(s) are in a TEST bucket — ${roles.join(', ')}.`);
     for (const b of buckets) console.log(`      ${b}`);
     console.log('      An invitation almost certainly went out with a test token.');
-    console.log('      Repoint it so new arrivals land correctly, then move these:');
+    console.log('      Repoint it so new arrivals land correctly:');
     console.log('        node repoint-token.mjs SCL-XXXXXX --like <the live one>');
-    console.log('        node move-session.mjs <session_id> pps-2026-27');
+    console.log('');
+    console.log('      Then move these — copy the line, add --apply when it looks right.');
+    console.log('      A session still being written is marked; wait for it to finish.');
+    for (const s of strays.sort((a, b) => b.last - a.last)) {
+      const live = ago(s.last) !== null && ago(s.last) <= ACTIVE_WINDOW_MIN;
+      console.log(`        node move-session.mjs ${s.id} ${SCHOOLS[0]}`
+        + `${live ? '   ← STILL ACTIVE, wait' : ''}`);
+      console.log(`          (${s.role}, ${s.rows} answers, ${ago(s.last)} min ago)`);
+    }
   }
 
   console.log('');
@@ -492,6 +500,19 @@ function writeStatus(all, orphans) {
       // Named, because when one of these appears the next question is always
       // "which one" and the id is what every other tool here takes.
       blank_runs: broken.map((s) => ({ session_id: s.id, role: s.role, answers: s.rows })),
+      // Named for the same reason blank_runs are: the next question after
+      // "answers are in a test bucket" is always "which ones", and the id is
+      // what move-session.mjs takes.
+      strays: all
+        .filter((s) => /^zz-/i.test(s.school) && s.rows > 0)
+        .map((s) => ({
+          session_id: s.id,
+          role: s.role,
+          school: s.school,
+          answers: s.rows,
+          last: s.last?.toISOString() ?? null,
+          still_active: ago(s.last) !== null && ago(s.last) <= ACTIVE_WINDOW_MIN,
+        })),
       orphans: orphans.map((o) => ({
         session_id: o.id,
         role: ROLE_FROM_ID(o.id),
