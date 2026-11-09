@@ -131,6 +131,69 @@ const when = (d) =>
 
 const ROLE = (section) => String(section || '?').replace('school_climate_', '');
 
+/* ── Transcription that invented its own answer ────────────────────────────── */
+
+/**
+ * Detect an answer the transcriber fabricated.
+ *
+ * WHAT THIS IS FOR
+ *
+ * 2026-11-09, a staff session on a 14-core Windows desktop with a good
+ * connection returned eleven answers like these:
+ *
+ *   SC_STF_03  Перестройка камаров в ихочении.
+ *   SC_STF_05  Ez a halotk idézajújuháj. Ez a halal függ.
+ *   SC_STF_11  Emanações são as justificações na galinha.
+ *
+ * The last one is grammatical Portuguese for "Emanations are the
+ * justifications in the chicken". The other two are not words in any language.
+ * The participant was speaking — recordings ran 3-9 seconds and the text
+ * lengths tracked them — but MIC QUIET reported input energy of 0.369 with no
+ * speech detected, which is the signature of loud NON-speech noise. The model
+ * could not parse it and, rather than returning nothing, invented fluent text.
+ *
+ * This is worse than an empty answer. An empty answer is honest. This is
+ * confident fabrication that reads like data and would go into a report as a
+ * participant's own words.
+ *
+ * `language: 'en'` is already pinned on all five interview pages and did not
+ * prevent it — see the note in the roles files about answers coming back in
+ * the wrong alphabet.
+ *
+ * WHY COUNT CHARACTERS RATHER THAN DETECT LANGUAGE
+ *
+ * Script detection alone catches the Cyrillic and misses the Hungarian and
+ * Portuguese, which are Latin. Counting characters that essentially never
+ * appear in English school-survey answers catches all three, and a lone "café"
+ * or "naïve" stays under the threshold.
+ */
+
+/** Non-Latin scripts. One character is enough — these are unambiguous. */
+const FOREIGN_SCRIPT = /[Ѐ-ӿͰ-Ͽ֐-׿؀-ۿ一-鿿぀-ヿऀ-ॿ]/;
+
+/**
+ * Latin letters with diacritics. Rare in English, routine in the languages the
+ * model reaches for. Two or more in one answer is the signal; one is a
+ * borrowed word.
+ */
+const DIACRITIC = /[À-ÿĀ-ɏ]/g;
+
+/**
+ * Three, not two. "résumé" alone has two, and a school answer may well mention
+ * one; "The café is naïve about it" has two and is fine. The fabrications ran
+ * four and five, so three separates them without flagging real English. A false
+ * positive here costs somebody a glance, but an alarm that cries wolf gets
+ * ignored, which is the only way this detector fails.
+ */
+const DIACRITIC_ALARM = 3;
+
+function looksFabricated(text) {
+  if (!text) return false;
+  if (FOREIGN_SCRIPT.test(text)) return true;
+  const hits = text.match(DIACRITIC);
+  return hits !== null && hits.length >= DIACRITIC_ALARM;
+}
+
 /**
  * An orphan has no stored row, so there is no `section` field to read. The
  * session id prefix is the only thing left that says who it was.
@@ -231,12 +294,16 @@ async function collect() {
       sessions.set(id, {
         id, role: ROLE(d.section), token: d.token || null,
         school: d.school_id || '(none)',
-        rows: 0, withText: 0, first: null, last: null,
+        rows: 0, withText: 0, fabricated: 0, first: null, last: null,
       });
     }
     const s = sessions.get(id);
     s.rows += 1;
-    if (textOf(d).trim()) s.withText += 1;
+    const t = textOf(d);
+    if (t.trim()) s.withText += 1;
+    // Counted, never kept. The flag is the finding; the text stays in
+    // `responses` where scrubPII has run on it.
+    if (looksFabricated(t)) s.fabricated += 1;
     const dt = when(d);
     if (dt) {
       if (!s.first || dt < s.first) s.first = dt;
@@ -315,6 +382,25 @@ function render(all, orphans = []) {
         + `${live ? '   ← STILL ACTIVE, wait' : ''}`);
       console.log(`          (${s.role}, ${s.rows} answers, ${ago(s.last)} min ago)`);
     }
+  }
+
+  /*
+   * Fabricated transcription. Above the verdict, because a session full of
+   * invented sentences scores as healthy on every other measure here — it has
+   * text, the text is the right length, nothing is blank.
+   */
+  const fabricated = all.filter((s) => s.fabricated > 0);
+  if (fabricated.length) {
+    const n = fabricated.reduce((a, s) => a + s.fabricated, 0);
+    console.log('');
+    console.log(`  ⛔  ${n} answer(s) look FABRICATED — transcription invented them.`);
+    console.log('      Loud background noise makes the model produce fluent text in');
+    console.log('      other languages rather than returning nothing. The ratings are');
+    console.log('      still valid; the words are not, and the audio is not kept.');
+    for (const s of fabricated.sort((a, b) => b.fabricated - a.fabricated)) {
+      console.log(`        ${s.id}  ${s.role}  ${s.fabricated} of ${s.rows}`);
+    }
+    console.log('      If the window is open, ask them to redo it somewhere quiet.');
   }
 
   console.log('');
@@ -500,6 +586,13 @@ function writeStatus(all, orphans) {
       // Named, because when one of these appears the next question is always
       // "which one" and the id is what every other tool here takes.
       blank_runs: broken.map((s) => ({ session_id: s.id, role: s.role, answers: s.rows })),
+      // Counts only — the text itself is never written here.
+      fabricated: all
+        .filter((s) => s.fabricated > 0)
+        .map((s) => ({
+          session_id: s.id, role: s.role, school: s.school,
+          fabricated: s.fabricated, of: s.rows,
+        })),
       // Named for the same reason blank_runs are: the next question after
       // "answers are in a test bucket" is always "which ones", and the id is
       // what move-session.mjs takes.
