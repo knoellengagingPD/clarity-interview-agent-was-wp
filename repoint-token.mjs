@@ -59,8 +59,37 @@ const argOf = (f) => { const i = args.indexOf(f); return i > -1 ? args[i + 1] : 
 const TOKEN = args.find((a) => a.startsWith('SCL-'));
 const LIKE = argOf('--like');
 
+/*
+ * --close / --open: the `status` field.
+ *
+ * Both places that read a token check it. The lookup route returns 404 "Token
+ * has expired or been deactivated" at page load, and climateTokenGuard rejects
+ * writes with 403 and the same message. So a token whose status is not
+ * 'active' is genuinely shut, at both ends.
+ *
+ * Worth closing a role's token once its window is over — a student link sits
+ * on a lab machine long after the session, and a retake is duplicate data
+ * nobody asked for.
+ *
+ * ONE THING TO KNOW BEFORE CLOSING. As of 2026-11-03 the pre-interview modals
+ * render ON TOP of the error screen, so someone opening a closed link can
+ * click through both and complete an interview that stores nothing. They lose
+ * their time and you lose the API cost; no data is corrupted. Until that is
+ * fixed, closing protects the dataset but not the participant.
+ */
+const CLOSE = args.includes('--close');
+const OPEN = args.includes('--open');
+
 if (!TOKEN) {
-  console.error('\nUsage: node repoint-token.mjs SCL-XXXXXX --like SCL-YYYYYY [--apply]\n');
+  console.error('\nUsage:');
+  console.error('  node repoint-token.mjs SCL-XXXXXX --like SCL-YYYYYY [--apply]');
+  console.error('  node repoint-token.mjs SCL-XXXXXX --close [--apply]');
+  console.error('  node repoint-token.mjs SCL-XXXXXX --open  [--apply]\n');
+  process.exit(1);
+}
+
+if (CLOSE && OPEN) {
+  console.error('\n--close and --open are opposites. Pick one.\n');
   process.exit(1);
 }
 
@@ -95,7 +124,12 @@ if (!doc) { console.error(`\n${TOKEN} not found in climate_tokens.\n`); process.
 const cur = doc.data();
 
 let target;
-if (LIKE) {
+if (CLOSE || OPEN) {
+  // Status only. Deliberately does not touch school or is_test: closing a
+  // token at the end of a window and repointing one mid-window are different
+  // jobs, and doing both in one write makes the restore point ambiguous.
+  target = { status: CLOSE ? 'closed' : 'active' };
+} else if (LIKE) {
   const ref = await findToken(LIKE);
   if (!ref) { console.error(`\n${LIKE} not found — nothing to copy from.\n`); process.exit(1); }
   const r = ref.data();
@@ -121,11 +155,15 @@ if (LIKE) {
   };
 }
 
-const FIELDS = ['school_id', 'school_name', 'district', 'is_test'];
+const FIELDS = (CLOSE || OPEN)
+  ? ['status']
+  : ['school_id', 'school_name', 'district', 'is_test'];
+
+const VERB = CLOSE ? 'CLOSING' : OPEN ? 'REOPENING' : 'REPOINTING';
 
 console.log('');
 console.log('='.repeat(74));
-console.log(`  ${APPLY ? 'REPOINTING' : 'DRY RUN — nothing will be written'}`);
+console.log(`  ${APPLY ? VERB : 'DRY RUN — nothing will be written'}`);
 console.log('='.repeat(74));
 console.log(`  token       ${TOKEN}`);
 console.log(`  document    ${doc.id}`);
@@ -142,15 +180,29 @@ for (const f of FIELDS) {
 console.log('');
 
 if (!changes) {
-  console.log('  Nothing to change. This token already points there.');
+  console.log(CLOSE || OPEN
+    ? `  Nothing to change. This token is already "${cur.status}".`
+    : '  Nothing to change. This token already points there.');
   console.log('='.repeat(74) + '\n');
   process.exit(0);
 }
 
+if (CLOSE) {
+  console.log('  Answers already stored are untouched — this only stops new ones.');
+  console.log('');
+  console.log('  Note: the pre-interview modals currently render OVER the error');
+  console.log('  screen, so someone opening this link can click through and run a');
+  console.log('  whole interview that stores nothing. The dataset is protected;');
+  console.log('  the participant is not. Reopen with --open if that matters.');
+  console.log('');
+}
+
+if (!CLOSE && !OPEN) {
 console.log('  Rows already written keep the school_id they were stamped with.');
 console.log('  Check the old bucket is empty, or retag it afterwards:');
 console.log(`    node watch-deployment.mjs --school ${cur.school_id}`);
 console.log('');
+}
 
 if (!APPLY) {
   console.log('  Re-run with --apply to write. Nothing has changed.');
