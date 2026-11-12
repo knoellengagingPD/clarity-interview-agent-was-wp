@@ -714,6 +714,35 @@ app.use((req, res, next) => {
   next();
 });
 
+/*
+ * Report prompts are assembled on the dashboard and posted whole, so they are
+ * the one legitimately large body this server takes. pps-2026-27's cross-role
+ * prompt is roughly 80KB: 69 question lines across four roles, their domain
+ * lines, and the open-ended responses.
+ *
+ * Against the 50kb global limit below, express.json threw
+ * PayloadTooLargeError before the route was reached, the error handler turned
+ * it into a bare 500, and the dashboard printed "Failed to generate report."
+ * Three sessions on 2026-11-12 were spent attributing that to API credits and
+ * then to a function timeout. The brief report, which is sent no open-ended
+ * responses, stayed under 50kb and worked throughout — which is what made the
+ * other two theories look plausible.
+ *
+ * Mounted BEFORE the global parser and scoped to these three paths. Everything
+ * else keeps 50kb. express.json is a no-op once req._body is set, so the
+ * global parser below simply passes these through.
+ *
+ * Note that body parsing precedes authentication, so this does widen what an
+ * unauthenticated caller can make this process allocate on these three paths,
+ * from 50kb to 1mb, before requireAdminJWT rejects them. It stays bounded, and
+ * the frontend caps open-ended responses per role so the prompt cannot grow
+ * with the size of a district.
+ */
+app.use(
+  ['/admin/generate-report', '/fmp/admin/generate-report', '/api/generate-quantitative-report'],
+  express.json({ limit: '1mb' }),
+);
+
 // The `verify` callback stashes the raw Buffer on req.rawBody so the Stripe
 // webhook handler can verify the signature before the body has been parsed.
 app.use(express.json({
