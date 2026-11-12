@@ -185,7 +185,11 @@ for (const s of all) {
   if (s.withText === 0 && s.rows >= 2) r.ratingsOnly += 1;
 }
 
-const dates = all.map((s) => s.first).filter(Boolean).sort();
+// Comparator required. Array.sort() with none converts to string, and a Date
+// stringifies to "Mon Nov 09 2026 …" — so the default sorts alphabetically by
+// weekday name. The first manifest reported a range of 09 to 11 November for
+// data collected from the 3rd, because "Mon" sorts before "Tue".
+const dates = all.map((s) => s.first).filter(Boolean).sort((a, b) => a - b);
 const L = [];
 L.push(`Clarity 360 — export of ${SCHOOL}`);
 L.push(`taken ${new Date().toISOString()}`);
