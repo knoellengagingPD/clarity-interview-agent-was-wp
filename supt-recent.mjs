@@ -31,7 +31,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const argOf = (f, d) => { const i = args.indexOf(f); return i > -1 ? args[i + 1] : d; };
 const DAYS = Number(argOf('--days', 45));
-const SHOW_ALL = args.includes('--all');
+const SHOW_ALL = args.includes('--all'); void SHOW_ALL;
 
 function credentials() {
   const b64 = process.env.FIREBASE_SERVICE_ACCOUNT_B64;
@@ -71,16 +71,23 @@ for (const doc of snap.docs) {
   const d = doc.data();
   const sid = d.session_id;
   if (!sid) continue;
-  // turn_* rows are conversational scaffolding, never a survey answer.
-  if (/^turn_\d+$/.test(String(d.question_id || ''))) continue;
   if (!sessions.has(sid)) {
     sessions.set(sid, {
-      sid, answers: 0, withText: 0, first: null, last: null,
+      sid, answers: 0, turns: 0, withText: 0, first: null, last: null,
       district: d.school_id || d.district || '',
       isTest: d.is_test === true,
     });
   }
   const s = sessions.get(sid);
+  /*
+   * turn_* rows are conversational scaffolding; a real answer carries a
+   * question id. Counted separately rather than dropped, because the
+   * difference is the finding: /admin/sessions keeps both, so the dashboard
+   * counts a session that stored only turns exactly like one that stored
+   * answers. On 2026-11-12 the dashboard showed 38 sessions and this script,
+   * which was dropping turn rows, found 8 -- the newest from 2 April.
+   */
+  if (/^turn_\d+$/.test(String(d.question_id || ''))) { s.turns += 1; continue; }
   s.answers += 1;
   const t = (d.followup_text ?? d.text ?? '') || '';
   if (t.trim()) s.withText += 1;
@@ -101,17 +108,19 @@ if (recent.length === 0) {
   process.exit(0);
 }
 
-console.log(`  ${'date'.padEnd(12)}${'answers'.padStart(8)}${'w/text'.padStart(8)}  ${'district'.padEnd(26)}session`);
+console.log(`  ${'date'.padEnd(12)}${'answers'.padStart(8)}${'turns'.padStart(7)}${'w/text'.padStart(8)}  ${'district'.padEnd(22)}session`);
 console.log('  ' + '-'.repeat(86));
-let complete = 0, partial = 0, test = 0;
+let complete = 0, partial = 0, test = 0, turnsOnly = 0;
 for (const s of recent) {
   const done = s.answers >= COMPLETE_ENOUGH;
   if (s.isTest) test += 1; else if (done) complete += 1; else partial += 1;
-  const mark = s.isTest ? ' TEST' : done ? '' : ' partial';
-  if (!SHOW_ALL && !done && !s.isTest) continue;
+  if (s.answers === 0 && s.turns > 0) turnsOnly += 1;
+  const mark = s.isTest ? ' TEST'
+    : s.answers === 0 && s.turns > 0 ? ' TURNS ONLY — no structured answers stored'
+    : done ? '' : ' partial';
   console.log(`  ${s.first.toISOString().slice(0, 10).padEnd(12)}`
-    + `${String(s.answers).padStart(8)}${String(s.withText).padStart(8)}  `
-    + `${(s.district || '—').padEnd(26)}${s.sid}${mark}`);
+    + `${String(s.answers).padStart(8)}${String(s.turns).padStart(7)}${String(s.withText).padStart(8)}  `
+    + `${(s.district || '—').padEnd(22)}${s.sid}${mark}`);
 }
 
 console.log('');
