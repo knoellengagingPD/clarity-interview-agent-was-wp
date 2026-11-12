@@ -78,13 +78,22 @@ same words, no item-composition caveat and no norm group required — this is th
 most defensible finding in the deployment, and it is both larger and cleaner
 than the domain-level gap it replaces.
 
-**The direction is consistent across every shared item.** Students sit below
-teachers on all of them, and the next four by p-value are coherent with the
-first: adults expect every student to do well (81% vs 96%), overall a good
-school (92% vs 100%), **disciplined fairly, no matter who they are (55% vs
-81%)**, and feeling safe (94% vs 97%). None survives correction across
-fifty-two tests, and none should be asserted individually. The pattern is worth
-one sentence as corroboration, with no p-value attached.
+**The pattern is itself a finding, and it can be tested rather than asserted.**
+Students score below teachers on **9 of 9** shared items and below staff on
+**10 of 11**. Sign tests on the item-level differences give p = 0.0039 and
+p = 0.0117. Teachers against staff is 5 of 11, p = 1.00 — the adult groups do
+not differ from each other systematically. So the result is not "the groups
+disagree"; it is that **students see this school less positively than the
+adults in it do**, holding across two independent adult comparators.
+
+Treat this as an omnibus result, not licence to assert individual items. The
+items are not independent — the same 87 students answer all of them — so the
+sign test slightly overstates its own confidence, and none of the individual
+comparisons below the first survives correction across fifty-two tests. The
+next four by p-value are coherent with the confirmed one and are reportable as
+pattern, not as separate claims: adults expect every student to do well (81% vs
+96%), overall a good school (92% vs 100%), **disciplined fairly, no matter who
+they are (55% vs 81%)**, and feeling safe (94% vs 97%).
 
 **Word this carefully, because the obvious phrasing is wrong.** The finding is
 not that students feel disrespected — four in five said they are treated with
@@ -148,6 +157,12 @@ response category a respondent most likely chose, not by a quality judgement.
 
 Parents 2.33, teachers 2.56, students 2.62, staff 2.80. Below every climate
 domain, for every role, without exception.
+
+**It is the lowest-favorability item for three of the four roles** — parents
+43%, teachers 52%, students 54%. That makes it the one place in this
+deployment where the adults are *not* more positive than the students, and it
+is the clearest evidence that this is a district-wide readiness question rather
+than anything about climate or about how any group experiences the school.
 
 Keep it visually and narratively separate from the three EDSCLS-aligned
 domains. It is an addition to the instrument, EDSCLS does not define it, and it
