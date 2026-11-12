@@ -83,6 +83,15 @@ p = 0.0001, surviving familywise correction across all eighteen tests. As an
 effect size: a randomly chosen student scores above a randomly chosen teacher
 on safety only **25%** of the time.
 
+**A competing explanation that cycle 2 will settle.** Fieldwork ran during
+active building construction (2.7). Construction plausibly affects perceived
+safety asymmetrically: teachers know the contractors are vetted and the site is
+managed, while students encounter unfamiliar adults, fenced areas, blocked
+routes and equipment. Some part of this 0.36 gap may be measuring a building
+site rather than a durable feature of the school's climate. The finding stands
+as reported — it is what the respondents said — but the report should name this
+possibility, and cycle 2, run after completion, will distinguish the two.
+
 **Word this carefully, because the obvious phrasing is wrong.** Students are at
 80% favorable on safety; teachers are at 96%. The finding is not that students
 feel unsafe — four in five agreed that they do feel safe. It is that teachers
@@ -200,6 +209,44 @@ items would.
   unaffected and retained.**
 - Where quotations appear in the report, they are drawn from the subset of
   respondents who chose to elaborate. Ratings are reported for everyone.
+
+### 2.7 Fieldwork conditions — record these before anything else
+
+**The building was under active renovation throughout the survey window**
+(3–11 November 2026). This is the most important piece of context attached to
+the data and it must be stated in the cycle 1 report, not recalled in cycle 2.
+
+The renovation is one of the things stakeholders value about this district. The
+survey caught it at its most disruptive point. A report that presents
+facilities as a weakness, without saying the facilities are mid-rebuild, tells
+the board something false.
+
+Three consequences, each carried into the section it affects:
+
+1. **Environment is measuring a temporary state.** It is the lowest-scoring
+   domain for students (2.90, 74% favorable) and holds the lowest item in the
+   deployment. Construction is the obvious candidate and it resolves itself.
+2. **Safety may be partly affected too** — see the competing explanation in
+   2.1, which bears on the one finding that survived correction.
+3. **It is a plausible explanation for the fabricated transcriptions, and the
+   timestamps neither confirm nor refute it.** Fifteen answers across eight
+   sessions were garbled by background noise loud enough to make the audio
+   unparseable; the working theory during fieldwork was a vacuum cleaner.
+   Construction noise fits a nine-day window better than cleaning does, so the
+   session times were checked. All eight fall between 10am and 2pm — but so
+   does the bulk of all activity (128 of 153 timestamped sessions, and 134 of
+   159 on 9 November alone). The fabrication rate is 6.3% inside that window
+   and 0% across the 25 sessions outside it, where the base rate predicts about
+   1.6. Zero is unremarkable at that count (p ≈ 0.19). **The test does not
+   distinguish the theories**, and the deployment is too concentrated in one
+   morning for any timing analysis to. Record it as an open question, not a
+   finding, and schedule cycle 2 across more days — which would answer it as a
+   side effect.
+
+Record the construction timeline now: start date, expected completion, and
+which parts of the building were out of use during the survey window. Cycle 2's
+interpretation depends on knowing whether it ran before or after completion,
+and nobody will reconstruct this accurately in six months.
 
 ---
 
@@ -344,6 +391,14 @@ district does. Two consequences for how the second cycle is read:
   `SC_STU_08` (55% favorable), `SC_STF_13` (40%) and student environment
   generally. Treat stability at the top as the success condition it is, not as
   a failure to improve.
+- **Environment is the exception, and must be handled separately.** It is
+  depressed by active construction (2.7), so it will very likely rise in
+  cycle 2 whether or not the district does anything. That rise is the
+  scaffolding coming down, not an effect of any intervention, and it must not
+  be claimed as one. State this in the cycle 1 report so the prediction is on
+  record before the result is known. If environment is the domain the district
+  chooses to act on, the cycle 2 comparison cannot separate the action from the
+  completion — say so when they choose, not afterwards.
 - Do not report a district-wide average of movement across all items. In a
   high-scoring district that average is held near zero by the ceiling and will
   understate real change in the places change was actually attempted.
@@ -380,6 +435,12 @@ and remove a limitation from the district note:
 
 Then recompute the section 5 table, fill limitation 5 in the district note, and
 settle the staff guidance.
+
+**Also record now, while it is knowable:** the construction start date, expected
+completion, and which parts of the building were out of use during the 3–11
+November window. Whether cycle 2 runs before or after completion determines how
+its environment and safety results can be read, and this will not be
+reconstructable later.
 
 **Capture for cycle 2:** the same denominators again, since enrolment moves.
 Nothing else about scoring — additions are safe, changes are not.
@@ -523,16 +584,26 @@ a tight spread is a shared view; a middling score with a wide spread is a split
 constituency, and the two need different responses. `SC_STF_08` (SD 1.06) and
 `SC_PAR_07` (SD 0.99) are invisible in any mean-based summary.
 
-Known district context belongs here as a source of hypotheses to check, never
-as an explanation asserted in the report. Pleasanton has a recent building
-renovation and growing enrolment, and student environment is nonetheless this
-district's lowest-scoring domain (2.90, 74% favorable) with `SC_STU_08` its
-lowest item (2.54, 55% favorable, 16% Strongly Disagree — the highest intensity
-on any item in the deployment). That is surprising enough to be worth the
-district's attention, whether the renovation is incomplete, disruptive while
-under way, or addressing something other than what students are responding to.
+Known district context belongs here as a source of hypotheses to check, and as
+a condition stated plainly where it is known — but never as an explanation the
+report asserts for a specific score. The building was under active construction
+during fieldwork (2.7), and student environment is this district's
+lowest-scoring domain (2.90, 74% favorable), holding `SC_STU_08`, the lowest
+item in the deployment (2.54, 55% favorable, 16% Strongly Disagree — also the
+highest intensity recorded anywhere in it).
+
+The right treatment is to report the score, state the condition, and let the
+district draw the link: "students rated this lowest, and the survey ran while
+the building was under construction." Not: "this score reflects the
+construction." The first is accurate and useful; the second is a causal claim
+from one cycle of perception data, which limitation 4 forbids.
+
 **Identifying what `SC_STU_08` actually asks is the single highest-value thing
-the export re-run unblocks** (section 6).
+the export re-run unblocks** (section 6). If it turns out to concern facilities,
+space or learning conditions, the construction reading is strong and the item
+belongs in cycle 2's watch list. If it concerns something else entirely, this
+district has a finding worth acting on that has nothing to do with the
+building.
 
 ### 9.3 Cross-group gaps — surfaced by rule, asserted by test
 
