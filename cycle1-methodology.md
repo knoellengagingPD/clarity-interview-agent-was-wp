@@ -50,70 +50,52 @@ Respondent-level domain means, 95% CI:
 | engagement | **3.00** [2.90, 3.11] | 3.06 [2.88, 3.25] | 3.29 [3.09, 3.48] | 3.08 [2.66, 3.49] |
 | environment | **2.90** [2.79, 3.02] | 3.18 [3.05, 3.32] | 3.09 [2.84, 3.34] | 3.27 [2.98, 3.56] |
 
-Eighteen pairwise comparisons were available. All were tested by permutation
-(20,000 label shuffles, no normality assumed), with bootstrap confidence
-intervals and both Holm and Benjamini–Hochberg corrections — `verify-crossrole.py`.
-An earlier draft of this section reported five results at an uncorrected
-±1.96 cutoff. **One survives.**
+**The comparison to run is same-item, not same-domain.** An earlier draft of
+this section compared domain means between roles and reported students 0.36
+below teachers on safety. That comparison is confounded, and limitation 3 of
+this document's own district note says why: the roles answer parallel but
+different question sets, so a domain mean reflects which items are in the
+bucket as much as what anyone thinks. Students' safety domain carries "Bullying,
+in person or online, is rare at this school" (2.77) and "Students treat each
+other with respect" (2.74) — peer-conduct questions teachers were never asked.
+Teachers' carries "Students treat teachers with respect" (3.22), a different
+construct. Much of that 0.36 was item composition.
 
-| comparison | difference | perm p | bootstrap 95% CI | status |
-|---|---|---|---|---|
-| safety, students vs teachers | **−0.36** | **0.0001** | [−0.52, −0.18] | **holds under Holm** |
-| environment, students vs teachers | −0.28 | 0.0065 | [−0.45, −0.11] | suggestive — see below |
-| engagement, students vs parents | −0.28 | 0.0128 | [−0.49, −0.06] | not after correction |
-| environment, students vs staff | −0.36 | 0.0419 | [−0.66, −0.08] | not after correction |
-| safety, teachers vs staff | +0.26 | 0.0758 | [+0.02, +0.51] | **withdrawn** |
+The 2026-11-12 export, the first to carry question text, shows that **fourteen
+questions are put to more than one role word for word.** Those comparisons need
+no caveat. Fifty-two of them are available; all were tested by permutation
+(20,000 shuffles, no normality assumed) with bootstrap intervals and both Holm
+and Benjamini–Hochberg corrections — `verify-crossrole.py`.
 
-The last row is the clearest lesson. It showed t = +2.0 on a Welch standard
-error and looked significant; its permutation p is 0.076, and bootstrap and
-permutation disagree about whether its interval clears zero. At n=11 the normal
-approximation is not trustworthy, and the earlier draft reported it on that
-basis. It should not appear in the report.
+**One survives, under both corrections:**
 
-The second row deserves care rather than dismissal. Its p of 0.0065 misses the
-Benjamini–Hochberg boundary for the second-ranked test (0.0056) by a hair. The
-evidence is not weak; the penalty for having run eighteen tests is heavy. Had
-the adult–student contrast been specified in advance — three tests, not
-eighteen — Holm would admit both safety and environment at 0.0167. That is an
-argument for pre-specifying the contrast before cycle 2, not for promoting it
-now.
+> **"Teachers and staff treat students with respect."**
+> students **3.01, 81% agreed** (n=85) · teachers **3.56, 100% agreed** (n=32)
+> difference −0.55, p = 0.0001, bootstrap 95% CI [−0.78, −0.33]
 
-So the single confirmed finding is **students rate safety 0.36 below teachers**,
-p = 0.0001, surviving familywise correction across all eighteen tests. As an
-effect size: a randomly chosen student scores above a randomly chosen teacher
-on safety only **25%** of the time.
+Every teacher who answered agreed. One student in five did not. Same question,
+same words, no item-composition caveat and no norm group required — this is the
+most defensible finding in the deployment, and it is both larger and cleaner
+than the domain-level gap it replaces.
 
-**A competing explanation that cycle 2 will settle.** Fieldwork ran during
-active building construction (2.7). Construction plausibly affects perceived
-safety asymmetrically: teachers know the contractors are vetted and the site is
-managed, while students encounter unfamiliar adults, fenced areas, blocked
-routes and equipment. Some part of this 0.36 gap may be measuring a building
-site rather than a durable feature of the school's climate. The finding stands
-as reported — it is what the respondents said — but the report should name this
-possibility, and cycle 2, run after completion, will distinguish the two.
+**The direction is consistent across every shared item.** Students sit below
+teachers on all of them, and the next four by p-value are coherent with the
+first: adults expect every student to do well (81% vs 96%), overall a good
+school (92% vs 100%), **disciplined fairly, no matter who they are (55% vs
+81%)**, and feeling safe (94% vs 97%). None survives correction across
+fifty-two tests, and none should be asserted individually. The pattern is worth
+one sentence as corroboration, with no p-value attached.
 
-**Word this carefully, because the obvious phrasing is wrong.** Students are at
-80% favorable on safety; teachers are at 96%. The finding is not that students
-feel unsafe — four in five agreed that they do feel safe. It is that teachers
-hold that view close to unanimously while students hold it at a materially
-lower rate. In a district with a recent renovation, growing enrolment and a
-supportive community, a report that leads with "students rate safety below
-teachers" and does not say that 80% of students agreed will misrepresent the
-school to its own board. State both numbers in the same sentence, every time.
+**Word this carefully, because the obvious phrasing is wrong.** The finding is
+not that students feel disrespected — four in five said they are treated with
+respect, 94% said they feel safe, and 92% said this is a good school. It is
+that the adults are close to unanimous and the students are not. In a district
+with a supportive community and a renovation under way, a report that leads
+with the gap and omits the 81% will misrepresent the school to its own board.
+Both numbers belong in the same sentence, every time.
 
-One pattern worth stating without a p-value attached. Students are numerically
-the lowest-scoring group in every one of the nine comparisons they appear in,
-across all three domains. Individually most of those are indistinguishable from
-noise; the consistency of direction is weak corroboration of the confirmed
-result, and should be described as that and nothing more.
-
-This is still the lead, because it is the only finding in the deployment that
-survives a familywise correction and it is immediately actionable: teachers in
-this building perceive safety considerably more favourably than their students
-do. It needs no external norms and no banding scheme to state. But it is one
-domain and one pair of groups — not the broad adult–student gap the earlier
-draft described, and the report should claim exactly as much as the table
-above.
+This is the lead. It needs no norms, no banding scheme and no multiplicity
+apology, and it points at something a school can actually work on.
 
 Note what it does **not** say. Teachers are not wrong and students are not
 right. The two groups answered different items, so the gap is a difference in
@@ -223,11 +205,14 @@ the board something false.
 
 Three consequences, each carried into the section it affects:
 
-1. **Environment is measuring a temporary state.** It is the lowest-scoring
-   domain for students (2.90, 74% favorable) and holds the lowest item in the
-   deployment. Construction is the obvious candidate and it resolves itself.
-2. **Safety may be partly affected too** — see the competing explanation in
-   2.1, which bears on the one finding that survived correction.
+1. **It does NOT explain the environment scores — this was checked and the
+   reading was wrong.** The environment domain here is the EDSCLS
+   *institutional* one (discipline, substance use, emergency readiness) and
+   contains no question about the physical building. Its lowest item asks
+   whether students are disciplined fairly. See 8.2.
+2. **It does not explain the confirmed cross-role finding either**, which is
+   about whether adults treat students with respect, on a question put to both
+   roles verbatim.
 3. **It is a plausible explanation for the fabricated transcriptions, and the
    timestamps neither confirm nor refute it.** Fifteen answers across eight
    sessions were garbled by background noise loud enough to make the audio
@@ -391,14 +376,13 @@ district does. Two consequences for how the second cycle is read:
   `SC_STU_08` (55% favorable), `SC_STF_13` (40%) and student environment
   generally. Treat stability at the top as the success condition it is, not as
   a failure to improve.
-- **Environment is the exception, and must be handled separately.** It is
-  depressed by active construction (2.7), so it will very likely rise in
-  cycle 2 whether or not the district does anything. That rise is the
-  scaffolding coming down, not an effect of any intervention, and it must not
-  be claimed as one. State this in the cycle 1 report so the prediction is on
-  record before the result is known. If environment is the domain the district
-  chooses to act on, the cycle 2 comparison cannot separate the action from the
-  completion — say so when they choose, not afterwards.
+- **Construction does not create a protected prediction here.** An earlier
+  draft said environment would rise in cycle 2 for reasons unrelated to
+  anything the district did. That rested on reading environment as the physical
+  building, which it is not (2.7, 8.2). No domain in this instrument is
+  mechanically tied to the renovation finishing, so cycle 2 movement is not
+  pre-discounted. The construction still belongs in the cycle 1 report as a
+  condition of fieldwork; it is not an explanation for any score.
 - Do not report a district-wide average of movement across all items. In a
   high-scoring district that average is held near zero by the ceiling and will
   understate real change in the places change was actually attempted.
@@ -592,18 +576,33 @@ lowest-scoring domain (2.90, 74% favorable), holding `SC_STU_08`, the lowest
 item in the deployment (2.54, 55% favorable, 16% Strongly Disagree — also the
 highest intensity recorded anywhere in it).
 
-The right treatment is to report the score, state the condition, and let the
-district draw the link: "students rated this lowest, and the survey ran while
-the building was under construction." Not: "this score reflects the
-construction." The first is accurate and useful; the second is a causal claim
-from one cycle of perception data, which limitation 4 forbids.
+**The export settled this on 2026-11-12, and the construction reading was
+wrong.** `SC_STU_08` is *"Students at this school are disciplined fairly, no
+matter who they are."* It has nothing to do with facilities. The inference that
+led there — environment is lowest, the building is mid-renovation, therefore
+students are reacting to the building — was an artifact of reading the domain
+label rather than the items. In this instrument "environment" is the EDSCLS
+*institutional* sense and carries discipline, substance use and emergency
+readiness. No item in it asks about the physical building at all.
 
-**Identifying what `SC_STU_08` actually asks is the single highest-value thing
-the export re-run unblocks** (section 6). If it turns out to concern facilities,
-space or learning conditions, the construction reading is strong and the item
-belongs in cycle 2's watch list. If it concerns something else entirely, this
-district has a finding worth acting on that has nothing to do with the
-building.
+Keep the general rule that produced the error as a warning: **context suggests
+hypotheses, item text settles them, and the order matters.** Three separate
+readings of this deployment — a renovation effect, a facilities complaint, a
+diffuse-frustration effect — were all built on a domain name.
+
+What is actually there is a theme, and a sharper one. Students' five
+lowest-scoring items are: disciplined fairly (2.54, 55% agreed, 16% strongly
+disagreed), AI guidance (2.62 — the policy gap, 2.4), **my input is valued when
+decisions are made** (2.66, 65%), students treat each other with respect (2.74,
+68%), and bullying is rare (2.77, 64%). Their three highest are *I feel safe at
+this school* (3.38, 94%), *this school is prepared to handle an emergency*
+(3.37, 95%) and *overall, this is a good school* (3.29, 92%).
+
+That reads as two clusters — institutional fairness and voice, and peer
+conduct — inside a school its students plainly think well of. It is reportable
+as rank order and theme without a single threshold, and the 16% strongly
+disagreeing that discipline is applied fairly is the most pointed number in the
+deployment.
 
 ### 9.3 Cross-group gaps — surfaced by rule, asserted by test
 
