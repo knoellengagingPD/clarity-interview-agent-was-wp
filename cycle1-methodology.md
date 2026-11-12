@@ -83,6 +83,15 @@ p = 0.0001, surviving familywise correction across all eighteen tests. As an
 effect size: a randomly chosen student scores above a randomly chosen teacher
 on safety only **25%** of the time.
 
+**Word this carefully, because the obvious phrasing is wrong.** Students are at
+80% favorable on safety; teachers are at 96%. The finding is not that students
+feel unsafe — four in five agreed that they do feel safe. It is that teachers
+hold that view close to unanimously while students hold it at a materially
+lower rate. In a district with a recent renovation, growing enrolment and a
+supportive community, a report that leads with "students rate safety below
+teachers" and does not say that 80% of students agreed will misrepresent the
+school to its own board. State both numbers in the same sentence, every time.
+
 One pattern worth stating without a p-value attached. Students are numerically
 the lowest-scoring group in every one of the nine comparisons they appear in,
 across all three domains. Individually most of those are indistinguishable from
@@ -325,6 +334,24 @@ ordinal data and unreliable at n=10 regardless of the correction. And they
 assume independent samples across cycles: matched respondents would detect
 considerably smaller changes.
 
+**Ceiling effects, which matter here more than they would elsewhere.** This
+district scores well: 58 of 69 items sit at or above 75% favorable, and
+teachers are at 96% on safety. An item at 90%+ favorable has almost nowhere to
+move upward, so cycle 2 cannot show improvement there no matter what the
+district does. Two consequences for how the second cycle is read:
+
+- Expect movement, if any, in the lower-scoring items. Watch
+  `SC_STU_08` (55% favorable), `SC_STF_13` (40%) and student environment
+  generally. Treat stability at the top as the success condition it is, not as
+  a failure to improve.
+- Do not report a district-wide average of movement across all items. In a
+  high-scoring district that average is held near zero by the ceiling and will
+  understate real change in the places change was actually attempted.
+
+This is the one respect in which doing well makes the product harder, and it
+should be said to the district in cycle 1 rather than explained away in
+cycle 2.
+
 **On matched respondents.** Linking individuals across cycles would improve
 precision materially. It also conflicts with what participants were told — the
 token system is deliberately not person-linked, and respondents were assured
@@ -379,7 +406,169 @@ document before the second wave is collected, not after seeing it.
 
 ---
 
-## 7. Provenance
+## 7. Band schemes tested against this data, and rejected
+
+Recorded because the question returns every time someone proposes a threshold.
+All figures are from the 69 rated items in `pps-2026-27`.
+
+**The current four-band scheme** (≥3.5 Strength / 3.0–3.49 / 2.5–2.99 / ≤2.49).
+Nothing reached the top band on a substantive domain — all twelve role-domain
+scores fall between 2.90 and 3.41. The two scores that clear 3.5 are both the
+single-item `overall` measure, in the two smallest samples. **Top band awarded:
+0 of 12.**
+
+**FEVS-style favorability bands**, synthesised from federal and district
+practice (Strength ≥75% favorable, Watch 60–74%, Challenge ≥40% unfavorable,
+Urgent ≥20% Strongly Disagree). Applied here:
+
+| | result |
+|---|---|
+| Strength | **58 of 69 items (84%)** |
+| Watch | 7 |
+| Challenge | 5 — of which **3 are AI Readiness** |
+| Urgent | **0** — highest Strongly-Disagree rate on any item is 16% |
+
+By role: teachers 89% of items a strength, parents 88%, staff 88%,
+students 72%.
+
+**An important caution about reading that as miscalibration.** Pleasanton is a
+small district with a recent building renovation, growing enrolment and a
+supportive community — genuinely positive attributes its stakeholders
+recognise. High favorability may be a correct measurement of a well-regarded
+district rather than evidence that the thresholds are wrong. With one district
+these two readings are observationally identical and cannot be separated. An
+earlier draft of this section treated 84% strengths as proof the scheme had
+failed; that inference was unsound.
+
+The recommendation survives on a different footing. Because the two readings
+cannot be distinguished, **a report asserting "this is a Strength" is making a
+claim the data cannot support either way**, while a report stating "80% of
+students agreed" is accurate under both. The case against banding is not that
+the scores are too high. It is that the verdict is unsupportable and the number
+is not.
+
+Two of the scheme's four item rules are also the same rule: with no neutral
+option,
+unfavorable = 100 − favorable, so "≥40% unfavorable" is "≤60% favorable." That
+independence holds on FEVS's 5-point scale, which has a neutral band between
+the two, and cannot hold here. Watch and Challenge also collide at exactly 60%.
+
+Strip the three AI Readiness items, which belong in their own section, and the
+scheme identifies two climate challenges in the whole district: `SC_STU_08`
+(55% unfavorable) and `SC_STF_13` (60% unfavorable on n=10 — six people, at the
+privacy floor).
+
+**EDSCLS performance levels** (Least Favorable <300, Favorable 300–400, Most
+Favorable >400). Not adoptable: the cut points are Rasch-calibrated on roughly
+100 schools and adjust for item difficulty, which raw means do not. Translated
+onto a 1–4 mean the three levels are <3.0, 3.0–4.0 and 4.0, which puts ten of
+twelve role-domain scores in a single band. EDSCLS is a sound **citation** for
+anchoring bands to response categories rather than to quality judgements. It is
+not a scoring system that can be borrowed without the calibration.
+
+**Bands derived from the observed distribution** (lower/mid/upper third of
+range). Rejected on principle: the cuts move every cycle and every school, so a
+district could improve on every item and read the same label. For a product
+whose purpose is cross-cycle comparison this is actively harmful.
+
+**Percentile or norm-referenced bands** — Panorama's 20-point national buckets,
+YouthTruth's percentile ranks, Gallup's quintiles, 5Essentials' labels. All
+require a norm database. They are the right destination and are unavailable
+until Clarity has enough districts to build one.
+
+The common failure is the same in every case: a cut point calibrated against
+some other population's distribution, imported whole. FEVS's 65% comes from the
+federal workforce; EDSCLS's 300 from a hundred volunteer schools. Dropped onto
+this district they either award everything or nothing. **A borrowed threshold
+is worse than an invented one, because its provenance makes it harder to
+question later.**
+
+---
+
+## 8. The reporting frame for cycle 1
+
+This is the decision that lets the report be written. It removes banding as the
+organising device and replaces it with four lenses, none of which needs a norm
+group.
+
+**It changes presentation, not scoring.** The freeze in section 1 covers items,
+wording, domain membership, the scale, and any threshold used in a computation.
+It does not cover what the report says about the numbers. Nothing below alters
+a stored value or a computed average, so cross-cycle comparability is intact.
+
+### 9.1 Percent favorable, as a number, with no verdict attached
+
+The headline metric for every item and domain: the share answering Agree or
+Strongly Agree. It needs no threshold anyone has to defend, it is what a board
+understands without a scoring key, and it is the one choice on which EDSCLS,
+Panorama, FEVS and three independent analyses of this data all agree.
+
+Report the mean beside it, never instead of it. They correlate at r = 0.877
+across these 69 items and are not interchangeable: 18 items clear 85%
+favorable while their mean sits below 3.25.
+
+Available in the frontend today — all three climate generators already hold
+`rd.sessions[].ratings` (`admin/page.tsx` 908, 1276, 1432), so this requires no
+backend change and no `server.js` deploy.
+
+### 9.2 Within-group rank order
+
+Which statements each group was most and least likely to agree with. Reported
+as **observed rank order and dispersion**, never as a severity ranking — see
+limitation 2 in the district note. This is where the actionable detail is: item
+spread within a domain runs a median 0.61, against 0.15–0.34 between domains.
+
+Report high-dispersion items separately from low-scoring ones. A low score with
+a tight spread is a shared view; a middling score with a wide spread is a split
+constituency, and the two need different responses. `SC_STF_08` (SD 1.06) and
+`SC_PAR_07` (SD 0.99) are invisible in any mean-based summary.
+
+Known district context belongs here as a source of hypotheses to check, never
+as an explanation asserted in the report. Pleasanton has a recent building
+renovation and growing enrolment, and student environment is nonetheless this
+district's lowest-scoring domain (2.90, 74% favorable) with `SC_STU_08` its
+lowest item (2.54, 55% favorable, 16% Strongly Disagree — the highest intensity
+on any item in the deployment). That is surprising enough to be worth the
+district's attention, whether the renovation is incomplete, disruptive while
+under way, or addressing something other than what students are responding to.
+**Identifying what `SC_STU_08` actually asks is the single highest-value thing
+the export re-run unblocks** (section 6).
+
+### 9.3 Cross-group gaps — surfaced by rule, asserted by test
+
+Use a 15-point favorability gap to **surface** candidates. Assert only what a
+test supports. On this data the rule flags safety students-vs-teachers (16
+points) and environment students-vs-staff (16 points); the first survives
+familywise correction at p = 0.0001 and the second does not survive at all
+(p = 0.042). The rule cannot tell them apart. That is the test's job, and
+Hanover's convention — test at 95%, mark significant differences with an
+asterisk — is the right presentation.
+
+### 9.4 Intensity, where it is non-trivial
+
+Percent choosing Strongly Disagree, reported as a number for items where it is
+material, with no threshold. The Urgent rule at 20% never fires here (the
+maximum is 16%), but the underlying point stands: intensity is information that
+percent favorable discards, and the top of that distribution —
+`SC_STU_08` 16%, `SC_PAR_15` 14%, `SC_PAR_10` 13% — is worth naming.
+
+### 9.5 What the report asserts
+
+Everything above is reported as an observation with its number attached. The
+report **asserts** only:
+
+1. The one cross-role difference that survives correction (2.1).
+2. Descriptive facts: counts, percentages, rank orders, response rates.
+3. The limits in section 4.
+
+It asserts no verdict on whether a score is good, no ranking of domains within
+a role, no severity ordering of items, and no comparison to other schools.
+Where the district wants a judgement about acceptability, that judgement is
+theirs and the report says so.
+
+---
+
+## 9. Provenance
 
 Section 2.1 was computed for this document and then revised: its first draft
 reported five cross-role differences at an uncorrected ±1.96 cutoff, and
