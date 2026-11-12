@@ -50,26 +50,52 @@ Respondent-level domain means, 95% CI:
 | engagement | **3.00** [2.90, 3.11] | 3.06 [2.88, 3.25] | 3.29 [3.09, 3.48] | 3.08 [2.66, 3.49] |
 | environment | **2.90** [2.79, 3.02] | 3.18 [3.05, 3.32] | 3.09 [2.84, 3.34] | 3.27 [2.98, 3.56] |
 
-Students are the lowest-scoring group on every domain where any pair differs
-beyond chance:
+Eighteen pairwise comparisons were available. All were tested by permutation
+(20,000 label shuffles, no normality assumed), with bootstrap confidence
+intervals and both Holm and Benjamini–Hochberg corrections — `verify-crossrole.py`.
+An earlier draft of this section reported five results at an uncorrected
+±1.96 cutoff. **One survives.**
 
-| comparison | difference | t |
-|---|---|---|
-| students vs teachers, safety | −0.36 | **−4.1** |
-| students vs teachers, environment | −0.28 | −3.2 |
-| students vs staff, environment | −0.36 | −2.3 |
-| students vs parents, engagement | −0.28 | −2.5 |
-| teachers vs staff, safety | +0.26 | +2.0 |
+| comparison | difference | perm p | bootstrap 95% CI | status |
+|---|---|---|---|---|
+| safety, students vs teachers | **−0.36** | **0.0001** | [−0.52, −0.18] | **holds under Holm** |
+| environment, students vs teachers | −0.28 | 0.0065 | [−0.45, −0.11] | suggestive — see below |
+| engagement, students vs parents | −0.28 | 0.0128 | [−0.49, −0.06] | not after correction |
+| environment, students vs staff | −0.36 | 0.0419 | [−0.66, −0.08] | not after correction |
+| safety, teachers vs staff | +0.26 | 0.0758 | [+0.02, +0.51] | **withdrawn** |
 
-Eighteen pairwise tests were run across the three domains, so the results near
-t = 2 would not survive a multiplicity correction and should be described as
-suggestive. **Students vs teachers on safety survives any correction** and is
-the most robust result in the deployment.
+The last row is the clearest lesson. It showed t = +2.0 on a Welch standard
+error and looked significant; its permutation p is 0.076, and bootstrap and
+permutation disagree about whether its interval clears zero. At n=11 the normal
+approximation is not trustworthy, and the earlier draft reported it on that
+basis. It should not appear in the report.
 
-This is the lead because it is the only finding that is both statistically
-solid and immediately actionable: adults in this building perceive safety and
-physical environment more favourably than the students do. It also needs no
-external norms and no banding scheme to state.
+The second row deserves care rather than dismissal. Its p of 0.0065 misses the
+Benjamini–Hochberg boundary for the second-ranked test (0.0056) by a hair. The
+evidence is not weak; the penalty for having run eighteen tests is heavy. Had
+the adult–student contrast been specified in advance — three tests, not
+eighteen — Holm would admit both safety and environment at 0.0167. That is an
+argument for pre-specifying the contrast before cycle 2, not for promoting it
+now.
+
+So the single confirmed finding is **students rate safety 0.36 below teachers**,
+p = 0.0001, surviving familywise correction across all eighteen tests. As an
+effect size: a randomly chosen student scores above a randomly chosen teacher
+on safety only **25%** of the time.
+
+One pattern worth stating without a p-value attached. Students are numerically
+the lowest-scoring group in every one of the nine comparisons they appear in,
+across all three domains. Individually most of those are indistinguishable from
+noise; the consistency of direction is weak corroboration of the confirmed
+result, and should be described as that and nothing more.
+
+This is still the lead, because it is the only finding in the deployment that
+survives a familywise correction and it is immediately actionable: teachers in
+this building perceive safety considerably more favourably than their students
+do. It needs no external norms and no banding scheme to state. But it is one
+domain and one pair of groups — not the broad adult–student gap the earlier
+draft described, and the report should claim exactly as much as the table
+above.
 
 Note what it does **not** say. Teachers are not wrong and students are not
 right. The two groups answered different items, so the gap is a difference in
@@ -331,6 +357,14 @@ settle the staff guidance.
 **Capture for cycle 2:** the same denominators again, since enrolment moves.
 Nothing else about scoring — additions are safe, changes are not.
 
+**Pre-specify the comparisons for cycle 2.** Testing all eighteen role pairs
+cost four of five apparent findings to the multiplicity correction, including
+one (students vs teachers on environment, p = 0.0065) that misses the boundary
+by 0.0009. Naming the contrasts of interest in advance — the student-versus-
+teacher comparison on each of the three domains is the obvious candidate, three
+tests rather than eighteen — recovers that power honestly. Write them into this
+document before the second wave is collected, not after seeing it.
+
 **Fix, none of which affects comparability:**
 
 - Staff participation. n=11 makes the role uninterpretable at any precision.
@@ -347,7 +381,12 @@ Nothing else about scoring — additions are safe, changes are not.
 
 ## 7. Provenance
 
-Section 2.1 and the r = 0.877 figure were computed for this document. The item
+Section 2.1 was computed for this document and then revised: its first draft
+reported five cross-role differences at an uncorrected ±1.96 cutoff, and
+permutation testing with Holm and Benjamini–Hochberg correction left one
+standing. One of the five did not hold even uncorrected once normality was
+dropped. `verify-crossrole.py` reproduces the whole table. The r = 0.877 figure
+was computed for this document. The item
 spread, its two artefact checks, the MDC estimates and the completion curves
 were computed 10–11 November 2026 and are reproducible from the export.
 
