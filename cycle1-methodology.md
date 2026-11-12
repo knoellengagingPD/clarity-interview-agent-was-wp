@@ -1,0 +1,324 @@
+# Cycle 1 — findings structure and methodology note
+
+School Climate Survey, Pleasanton Public Schools, `pps-2026-27`
+Fieldwork 3–11 November 2026. Written 11 November 2026.
+
+Scope of this document: how to structure the first-cycle report, and what the
+report may and may not claim. It is the analysis plan, not the report. Every
+number below is computed from `export-pps-2026-27/` and is reproducible from
+`shareable.csv` and `items.csv`.
+
+---
+
+## 1. What cycle 1 is for
+
+The product's value is the comparison between cycles. That makes cycle 1 a
+**baseline and a resource-allocation map**, not a verdict. The report should say
+so in its first paragraph, because almost every interpretive error available
+here comes from reading a single cycle as a judgement.
+
+Two consequences follow, and they constrain everything else:
+
+**The instrument freezes now.** Items, scale, domain membership and scoring
+must not change between cycles. EDSCLS broke every trend line its users had
+when it moved to benchmarked scale scores in VM 3.0, and had to publish a
+notice that legacy scores were not comparable. Any rescoring done after
+Pleasanton cycle 1 costs the comparison the product is sold on. The band
+labels were reworded on 2026-11-10 (`dcbe4bf`, `9591411` — legends only, no
+thresholds moved); that is the last change before cycle 2.
+
+**Cycle 1 should publish the thresholds cycle 2 will be judged against.**
+Stating the minimum detectable change per group *before* the second wave is
+run is a credibility asset, not a disclosure risk: it means the district cannot
+be told after the fact that a favourable move was meaningful and an
+unfavourable one was noise. Section 5 has the numbers.
+
+---
+
+## 2. Findings, in order of evidential strength
+
+Order the report this way. The ordering is not editorial preference — it tracks
+how well each claim survives the caveats in section 4.
+
+### 2.1 The adult–student gap (lead with this)
+
+Respondent-level domain means, 95% CI:
+
+| domain | students (n=87) | teachers (n=32) | parents (n=29) | staff (n=11) |
+|---|---|---|---|---|
+| safety | **3.05** [2.96, 3.14] | 3.41 [3.26, 3.55] | 3.17 [2.96, 3.38] | 3.15 [2.94, 3.36] |
+| engagement | **3.00** [2.90, 3.11] | 3.06 [2.88, 3.25] | 3.29 [3.09, 3.48] | 3.08 [2.66, 3.49] |
+| environment | **2.90** [2.79, 3.02] | 3.18 [3.05, 3.32] | 3.09 [2.84, 3.34] | 3.27 [2.98, 3.56] |
+
+Students are the lowest-scoring group on every domain where any pair differs
+beyond chance:
+
+| comparison | difference | t |
+|---|---|---|
+| students vs teachers, safety | −0.36 | **−4.1** |
+| students vs teachers, environment | −0.28 | −3.2 |
+| students vs staff, environment | −0.36 | −2.3 |
+| students vs parents, engagement | −0.28 | −2.5 |
+| teachers vs staff, safety | +0.26 | +2.0 |
+
+Eighteen pairwise tests were run across the three domains, so the results near
+t = 2 would not survive a multiplicity correction and should be described as
+suggestive. **Students vs teachers on safety survives any correction** and is
+the most robust result in the deployment.
+
+This is the lead because it is the only finding that is both statistically
+solid and immediately actionable: adults in this building perceive safety and
+physical environment more favourably than the students do. It also needs no
+external norms and no banding scheme to state.
+
+Note what it does **not** say. Teachers are not wrong and students are not
+right. The two groups answered different items, so the gap is a difference in
+reported perception between groups, not a measured discrepancy on identical
+questions. Section 4 states this limit for the district.
+
+### 2.2 Item-level patterns within each role
+
+This is where the actionable detail lives, and it is larger than anything at
+the domain level. Within each role-domain, the gap between the
+highest- and lowest-rated item runs **0.39 to 0.71, median 0.61** — and exceeds
+that group's minimum detectable change in **all twelve** role-domains, by
+factors of 1.7× to 6.9×.
+
+Verified rather than assumed, because two artefacts could have produced it:
+
+- *Unequal respondent sets.* Restricting to the 82 students who answered all
+  seven safety items leaves the spread at 0.62. Paired within those same
+  students, top item minus bottom item is 0.62, SE 0.090, **t = 6.9**.
+- *Survey position / fatigue.* Mean rating regressed on question number gives
+  slopes of −0.008 (students), −0.007 (parents), −0.022 (teachers) and
+  **+0.006 (staff)**. Too small to matter and inconsistent in sign.
+
+Report these as **observed rank order and dispersion**. Do not describe them as
+item difficulty, and do not assert that respondents experience the
+lowest-ranked item worse than the highest — see 4.2. The usable form is "of the
+seven safety statements, students were least likely to agree with X," together
+with the item's percent agreeing and its SD.
+
+Flag high-dispersion items separately from low-mean items. They are different
+problems: a low mean with a tight SD is a shared view, a middling mean with a
+wide SD is a split constituency. `SC_STF_08` (mean 3.30, SD 1.06) and
+`SC_PAR_07` (mean 3.25, SD 0.99) are the latter and would be invisible in any
+mean-based summary.
+
+### 2.3 Percent agreeing, alongside every mean
+
+On a forced-choice 1–4 scale with no neutral option, the meaningful boundary is
+between Disagree (2) and Agree (3). "71% of teachers agreed or strongly agreed"
+needs no banding scheme, no threshold anyone has to defend, and is what a board
+understands without a scoring key. Mean and percent agreeing correlate at
+r = 0.877 across the 69 items — high, but **not interchangeable**: 18 items
+clear 85% agreement while their mean sits below 3.25. Report both; do not
+derive one from the other.
+
+This also matches how EDSCLS defines its own performance levels — by which
+response category a respondent most likely chose, not by a quality judgement.
+
+### 2.4 AI Readiness, presented separately
+
+Parents 2.33, teachers 2.56, students 2.62, staff 2.80. Below every climate
+domain, for every role, without exception.
+
+Keep it visually and narratively separate from the three EDSCLS-aligned
+domains. It is an addition to the instrument, EDSCLS does not define it, and it
+should be framed as a **readiness and policy gap rather than a climate
+deficit**. Folding 2.33 into a climate narrative tells the district something
+false about its culture. `SC_PAR_15` is 43% agreement with n falling from 29 to
+21 by that point in the parent survey, which is as much an exposure problem as
+an opinion.
+
+### 2.5 Completion patterns
+
+Not a footnote — an instrument finding, and it was missed in the first pass
+over this data.
+
+| role | first item | last item | loss |
+|---|---|---|---|
+| students | 87 | 78 | 10% |
+| teachers | 32 | 27 | 16% |
+| parents | 29 | 21 | **28%** |
+| staff | 11 | 10 | 9% |
+
+Parents lose four respondents by item 3 and eight by item 15. The practical
+consequence is that later items rest on a smaller, self-selected set, so item
+comparisons between early and late positions carry a caveat the within-domain
+comparisons in 2.2 do not — those were verified on complete cases.
+
+The design implication for cycle 2 is to shorten the parent instrument or move
+the highest-value items earlier. That is a change to *administration*, not to
+items or scoring, so it does not break comparability. Dropping or reordering
+items would.
+
+### 2.6 Data quality, stated plainly
+
+- **6 respondents rated every question and spoke on none.** Their ratings are
+  valid and are included in every average. This is a legitimate way to take the
+  survey, not a fault.
+- **15 answers across 8 sessions contain fabricated transcription** —
+  non-English or incoherent text produced when background noise made the audio
+  unparseable. Those answers are excluded from quotation and from counts of who
+  addressed a question. **The ratings from those same respondents are
+  unaffected and retained.**
+- Where quotations appear in the report, they are drawn from the subset of
+  respondents who chose to elaborate. Ratings are reported for everyone.
+
+---
+
+## 3. What not to lead with
+
+**The four-band scheme.** Thresholds are ≥3.5 Strength, 3.0–3.49, 2.5–2.99,
+≤2.49. They were chosen rather than derived from any norm group, and on the
+three substantive domains **nothing in this deployment reached 3.5** — all
+twelve role-domain scores fall between 2.90 and 3.41. Two scores do clear it,
+both on the single-item `overall` measure (staff 3.80, teachers 3.67), and both
+in the smallest samples.
+
+A banding scheme whose top category is awarded only by a one-item summary
+measure is not discriminating usefully. Use the bands as orientation inside the
+report — which answer the average respondent gave — and never as the headline.
+Do not change the thresholds before cycle 2 (section 1).
+
+**Ranking domains against each other within a role.** Domain means differ by
+only 0.15–0.34 within a role, while item spread inside a single domain is
+0.61. Saying "engagement is this school's weakest domain" rests on a smaller
+difference than the variation it averages over. Cross-*role* comparison on the
+same domain is a different matter and is sound — that is 2.1.
+
+---
+
+## 4. Methodology note — district-facing
+
+Lift this into the report largely as written.
+
+> **How to read these numbers.** Every statement in this report rests on a
+> 1–4 agreement scale: 1 Strongly Disagree, 2 Disagree, 3 Agree, 4 Strongly
+> Agree. There is no neutral option, so a score of 3.0 means the typical
+> respondent agreed. Scores are reported for all respondents who rated a
+> question; where a quotation appears, it comes from the subset who chose to
+> speak.
+>
+> **This is a baseline.** It describes how four groups in this district
+> perceived their school in November 2026. It is the measurement against which
+> a second cycle later this year will be compared, and it is most useful read
+> that way.
+>
+> **What these results support.** Differences between respondent groups on the
+> same domain, where this report flags them as beyond chance. The rank order of
+> statements within a group — which statements a group was most and least
+> likely to agree with. The proportion of each group agreeing with each
+> statement. The spread of opinion within a group.
+>
+> **What these results do not support.**
+>
+> 1. *That any score is high or low compared with other schools.* No comparison
+>    group exists for this instrument. The thresholds used for orientation in
+>    this report were chosen by Engaging Education Solutions and are not
+>    norm-referenced. What counts as an acceptable score for this district is
+>    the district's judgement, not a finding of this survey.
+> 2. *That a lower-rated statement describes a worse condition than a
+>    higher-rated one.* Statements differ in how readily anyone agrees with
+>    them, independent of conditions. Separating that from genuine differences
+>    in experience requires calibration across many schools, which does not yet
+>    exist. Rank order within a group is reported as an observation and a
+>    starting point for inquiry, not as a severity ranking.
+> 3. *That one group's score is numerically equivalent to another's.* The four
+>    groups answered parallel but different sets of statements. Differences
+>    between groups are differences in reported perception, not measured
+>    discrepancies on identical questions.
+> 4. *Anything causal.* These are perceptions at one point in time, with no
+>    linked outcome data and no comparison condition.
+> 5. *Generalisation beyond the people who responded.* Response rates against
+>    total enrolment and staffing were not captured for this cycle, so the
+>    extent to which these respondents represent the district is unknown.
+> 6. *Statistical findings for non-instructional staff.* Eleven staff
+>    responded. Staff results appear as counts of respondents, are descriptive
+>    only, and should not drive priorities on their own.
+> 7. *That the absence of a top-band score indicates a problem.* On this kind
+>    of scale, top-band scores are uncommon in any institution.
+
+---
+
+## 5. Thresholds for cycle 2 — publish these now
+
+Minimum detectable change in a domain mean, treating the respondent as the unit
+of analysis rather than the individual rating:
+
+| role | respondents | MDC |
+|---|---|---|
+| students | 82–87 | **0.09–0.12** |
+| teachers | 31–32 | 0.14–0.19 |
+| parents | 25–29 | 0.20–0.25 |
+| staff | 10–11 | **0.21–0.42** |
+
+Reading: a 0.10 move in a student domain mean next cycle is real. The same move
+in a parent mean is not. Staff would need to shift a third to half a point
+before anything could be claimed, which no scoring decision can fix — only
+participation.
+
+Three caveats on these figures. They assume respondents are independent and the
+sampling roughly normal, which is approximate for ordinal data and
+unreliable at n=10. They will shrink if response rates are high relative to
+the population — a finite-population correction applies and cannot currently be
+computed, because denominators were not captured. And they assume independent
+samples across cycles: matched respondents would detect considerably smaller
+changes.
+
+**On matched respondents.** Linking individuals across cycles would improve
+precision materially. It also conflicts with what participants were told — the
+token system is deliberately not person-linked, and respondents were assured
+that no one can attribute an answer to them. That is a consent question for the
+district to decide before cycle 2 fieldwork, not a technical change to make
+quietly.
+
+---
+
+## 6. Before cycle 2
+
+**Freeze:** items, wording, domain membership, the 1–4 scale, score thresholds.
+
+**Capture, which cycle 1 did not:**
+
+- Enrolment and staffing denominators per role, for response rates and the
+  finite-population correction.
+- Nothing else about scoring. Additions are safe; changes are not.
+
+**Fix, none of which affects comparability:**
+
+- Staff participation. n=11 makes the role uninterpretable at any precision.
+- Parent instrument length, or item order within it — 28% attrition.
+- `question_text` in the export. Added to `export-school.mjs` 2026-11-11; the
+  export needs re-running. Question ids are post-renumbering (`SC_STU_04` and
+  the like) and **neither repository contains a lookup table** — only a comment
+  at `server.js:6913`. Until the re-run, the item-level findings in 2.2 cannot
+  be read by anyone without the live survey in front of them.
+- The modal-over-error-screen bug, the mic-nudge `everHeardSpeech` case, and
+  `SCLTEST-` prefixing for test tokens. All documented, none affecting data.
+
+---
+
+## 7. Provenance
+
+Section 2.1 and the r = 0.877 figure were computed for this document. The item
+spread, its two artefact checks, the MDC estimates and the completion curves
+were computed 10–11 November 2026 and are reproducible from the export.
+
+Three independent analyses were run against the cycle 1 data — this one and two
+external models — and converged on the same structure: lead with items and
+cross-group contrast in cycle 1, lead with change in cycle 2, report
+distributions rather than bare means, treat staff as descriptive, make no
+item-difficulty claim. The convergence is from different starting framings and
+is the main reason for confidence in the ordering in section 2.
+
+Two findings came from outside this analysis: the completion curves in 2.5 and
+the finite-population point in section 5. Two external suggestions were
+rejected: banding derived from the observed distribution, which re-cuts itself
+every cycle and would destroy cross-cycle comparability, and pooling staff with
+teachers, who answered different items.
+
+The claim that the 3.5 threshold requires zero ratings below 3 is false and
+should not appear anywhere: `SC_STF_14` has a mean of exactly 3.50 with an SD
+of 0.71.

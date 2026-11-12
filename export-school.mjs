@@ -20,11 +20,37 @@
  *   node export-school.mjs --school pps-2026-27
  *   node export-school.mjs --school pps-2026-27 --out ~/Desktop/pps-snapshot
  *
- * Writes three files:
+ * Writes five files:
  *
  *   responses.csv   one row per answer — the data itself
  *   sessions.csv    one row per respondent, with the quality flags
- *   MANIFEST.txt    counts, date range, and what was flagged
+ *   items.csv       one row per question: n, mean, min, max, sd
+ *   shareable.csv   ratings only, no free text, respondents renumbered
+ *   MANIFEST.TXT    counts, date range, and what was flagged
+ *
+ * question_text is carried on every answer row. It was omitted until
+ * 2026-11-11, which made the export uninterpretable by anyone who did not
+ * already have the survey in front of them: question ids are post-renumbering
+ * (SC_STU_04 and the like) and NEITHER REPO CONTAINS A LOOKUP TABLE for them —
+ * only a comment at server.js:6913 noting the 2026-10-27 renumbering happened.
+ * The field was on the Firestore docs the whole time; the export simply did not
+ * write it.
+ *
+ * items.csv exists because within-domain item spread is large: across all
+ * twelve role-domains in pps-2026-27 the gap between a domain's easiest and
+ * hardest item ran 0.39 to 0.71, median 0.61, which in every case exceeded the
+ * change that role could reliably detect, and ran two to four times larger
+ * than the differences between domains. Whether that is item difficulty or
+ * genuine variation in what respondents think cannot be settled without an IRT
+ * calibration across many schools. Either way the domain mean compresses most
+ * of it away, so the item table is where the readable findings are.
+ *
+ * shareable.csv carries no free text, no token and no document id, and
+ * renumbers respondents within role. Open answers can name a teacher or an
+ * incident, and 87 students in one district is a small enough crowd that a
+ * quotation plus a role can identify someone. The ratings cannot. Use this one
+ * for anything leaving the district's control — an outside analyst, a
+ * statistics question, a third-party tool.
  *
  * READ ONLY. Reads two collections and writes to disk. Touches nothing in
  * Firestore.
@@ -63,6 +89,20 @@ admin.initializeApp({ credential: admin.credential.cert(sa), projectId: process.
 const db = admin.firestore();
 
 const textOf = (d) => (d.followup_text ?? d.text ?? '') || '';
+const qtext = (d) =>
+  typeof d.question_text === 'string' && d.question_text.trim() ? d.question_text.trim() : '';
+
+/**
+ * Mirrors server.js:5161. A rating of 0 is a placeholder written by the
+ * open-ended half of a question pair, not an answer of zero — every
+ * dream_big row and roughly half the ai_readiness rows carry one. Averaging
+ * them in drags AI Readiness from about 2.6 down to about 1.3, which is how
+ * an analysis of this export first read it as a near-floor score.
+ */
+const isRated = (d) => {
+  const n = Number(d.rating);
+  return d.rating !== undefined && d.rating !== null && !isNaN(n) && n !== 0;
+};
 const when = (d) =>
   d.ts_at?.toDate?.() || (typeof d.ts === 'string' ? new Date(d.ts) : null) || (d.ts?.toDate?.() ?? null);
 const ROLE = (s) => String(s || '?').replace('school_climate_', '');
@@ -117,7 +157,7 @@ fs.mkdirSync(OUT, { recursive: true });
 /* ── responses.csv ─────────────────────────────────────────────────────────── */
 
 const responseLines = [row([
-  'session_id', 'role', 'question_id', 'rating', 'domain',
+  'session_id', 'role', 'question_id', 'question_text', 'rating', 'domain',
   'answer_text', 'chars', 'flagged_fabricated', 'token', 'ts', 'doc_id',
 ])];
 
@@ -130,7 +170,7 @@ for (const d of docs) {
   const dt = when(d);
 
   responseLines.push(row([
-    d.session_id, role, d.question_id, d.rating, d.domain,
+    d.session_id, role, d.question_id, qtext(d), d.rating, d.domain,
     t, t.length, fab ? 'YES' : '', d.token, dt ? dt.toISOString() : '', d._id,
   ]));
 
@@ -176,6 +216,75 @@ for (const s of all.sort((a, b) => a.role.localeCompare(b.role) || (a.first - b.
 
 fs.writeFileSync(path.join(OUT, 'sessions.csv'), sessionLines.join('\n') + '\n');
 
+/* ── items.csv ─────────────────────────────────────────────────────────────── */
+
+const items = new Map();
+for (const d of docs) {
+  if (!isRated(d)) continue;
+  const key = `${ROLE(d.section)}|${d.question_id}`;
+  if (!items.has(key)) {
+    items.set(key, {
+      role: ROLE(d.section), qid: d.question_id, domain: d.domain || '',
+      text: qtext(d), vals: [],
+    });
+  }
+  const it = items.get(key);
+  it.vals.push(Number(d.rating));
+  if (!it.text) it.text = qtext(d);
+}
+
+const itemLines = [row(['role', 'domain', 'question_id', 'question_text',
+  'n', 'mean', 'min', 'max', 'sd'])];
+
+// Sample sd (n-1). The population form understates spread at these sample
+// sizes, and several roles here are small enough for the difference to matter.
+const sd = (v) => {
+  if (v.length < 2) return '';
+  const m = v.reduce((a, b) => a + b, 0) / v.length;
+  return Math.sqrt(v.reduce((a, x) => a + (x - m) ** 2, 0) / (v.length - 1));
+};
+
+const itemRows = [...items.values()].sort((a, b) =>
+  a.role.localeCompare(b.role) || String(a.domain).localeCompare(String(b.domain))
+  || String(a.qid).localeCompare(String(b.qid)));
+
+for (const it of itemRows) {
+  const m = it.vals.reduce((a, b) => a + b, 0) / it.vals.length;
+  const s = sd(it.vals);
+  itemLines.push(row([
+    it.role, it.domain, it.qid, it.text, it.vals.length,
+    m.toFixed(2), Math.min(...it.vals), Math.max(...it.vals),
+    s === '' ? '' : s.toFixed(2),
+  ]));
+}
+
+fs.writeFileSync(path.join(OUT, 'items.csv'), itemLines.join('\n') + '\n');
+
+/* ── shareable.csv ─────────────────────────────────────────────────────────── */
+
+// Respondents are renumbered within role, so per-respondent analysis still
+// works (a domain mean's standard error needs the respondent as the unit)
+// while the session id, which appears in Firestore and in the admin
+// dashboard, does not travel.
+const pseudo = new Map();
+const shareLines = [row(['role', 'respondent', 'domain', 'question_id',
+  'question_text', 'rating'])];
+
+for (const d of docs) {
+  if (!isRated(d)) continue;
+  const role = ROLE(d.section);
+  const key = `${role}|${d.session_id}`;
+  if (!pseudo.has(key)) {
+    const nth = [...pseudo.keys()].filter(k => k.startsWith(`${role}|`)).length + 1;
+    pseudo.set(key, `${role.slice(0, 3).toUpperCase()}-${String(nth).padStart(3, '0')}`);
+  }
+  shareLines.push(row([
+    role, pseudo.get(key), d.domain, d.question_id, qtext(d), d.rating,
+  ]));
+}
+
+fs.writeFileSync(path.join(OUT, 'shareable.csv'), shareLines.join('\n') + '\n');
+
 /* ── MANIFEST.txt ──────────────────────────────────────────────────────────── */
 
 const byRole = {};
@@ -220,6 +329,17 @@ L.push('  counted. The RATINGS from the same respondents are unaffected.');
 L.push('');
 L.push('w/text counts answers with any stored words, before either judgement.');
 L.push('');
+L.push('rating 0 is NOT an answer of zero. It is a placeholder written by the');
+L.push('  open-ended half of a question pair. Every dream_big row carries one,');
+L.push('  and so do about half the ai_readiness rows. Exclude them before');
+L.push('  averaging anything — including them drags AI Readiness from roughly');
+L.push('  2.6 to roughly 1.3. items.csv and shareable.csv already exclude them;');
+L.push('  responses.csv keeps every row as stored.');
+L.push('');
+L.push('shareable.csv is the file to send outside the district: ratings only,');
+L.push('  no free text, no token, no document id, respondents renumbered. Open');
+L.push('  answers can name a teacher or an incident; the ratings cannot.');
+L.push('');
 L.push('Written by export-school.mjs. Read-only; nothing in Firestore was');
 L.push('modified to produce it.');
 
@@ -229,8 +349,10 @@ console.log('');
 console.log(L.join('\n'));
 console.log('');
 console.log(`written to ${OUT}`);
-console.log('  responses.csv   one row per answer');
+console.log('  responses.csv   one row per answer, with question text');
 console.log('  sessions.csv    one row per respondent');
+console.log('  items.csv       one row per question — n, mean, min, max, sd');
+console.log('  shareable.csv   ratings only, de-identified, safe to send out');
 console.log('  MANIFEST.txt    the summary above');
 console.log('');
 process.exit(0);
