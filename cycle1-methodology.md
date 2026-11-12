@@ -231,9 +231,11 @@ Lift this into the report largely as written.
 >    discrepancies on identical questions.
 > 4. *Anything causal.* These are perceptions at one point in time, with no
 >    linked outcome data and no comparison condition.
-> 5. *Generalisation beyond the people who responded.* Response rates against
->    total enrolment and staffing were not captured for this cycle, so the
->    extent to which these respondents represent the district is unknown.
+> 5. *Generalisation beyond the people who responded.* [Insert the response
+>    rate per group once denominators are in — "87 of N students responded,
+>    X%".] Where the rate is high, the results describe most of that group.
+>    Where it is low, the respondents chose to take part and may differ from
+>    those who did not, in ways this survey cannot measure.
 > 6. *Statistical findings for non-instructional staff.* Eleven staff
 >    responded. Staff results appear as counts of respondents, are descriptive
 >    only, and should not drive priorities on their own.
@@ -255,17 +257,47 @@ of analysis rather than the individual rating:
 | staff | 10–11 | **0.21–0.42** |
 
 Reading: a 0.10 move in a student domain mean next cycle is real. The same move
-in a parent mean is not. Staff would need to shift a third to half a point
-before anything could be claimed, which no scoring decision can fix — only
-participation.
+in a parent mean is not.
 
-Three caveats on these figures. They assume respondents are independent and the
-sampling roughly normal, which is approximate for ordinal data and
-unreliable at n=10. They will shrink if response rates are high relative to
-the population — a finite-population correction applies and cannot currently be
-computed, because denominators were not captured. And they assume independent
-samples across cycles: matched respondents would detect considerably smaller
-changes.
+**These are upper bounds, and the denominators will lower them — possibly a
+lot.** The figures above treat each group as a sample from an effectively
+infinite population. Where respondents are a large share of the group that
+could have answered, a finite-population correction applies:
+SE × √((N−n)/(N−1)). Denominators are being obtained for cycle 1, so the table
+should be recomputed before publication rather than issued as it stands. What
+is at stake:
+
+| role | n | if N = | response rate | MDC becomes |
+|---|---|---|---|---|
+| students | 87 | 95 | 92% | **0.03** |
+| | | 150 | 58% | 0.06 |
+| | | 500 | 17% | 0.08 |
+| teachers | 32 | 35 | 91% | **0.05** |
+| | | 60 | 53% | 0.10 |
+| | | 200 | 16% | 0.14 |
+| parents | 29 | 40 | 72% | **0.12** |
+| | | 150 | 19% | 0.20 |
+| staff | 11 | 15 | 73% | **0.11** |
+| | | 25 | 44% | 0.16 |
+| | | 80 | 14% | 0.20 |
+
+The staff row is the consequential one. If Pleasanton employs around fifteen
+non-instructional staff and eleven answered, the detectable change halves to
+roughly 0.11 and **staff become usable for trend** rather than directional
+only — the opposite of the conclusion the uncorrected figure supports. If the
+pool is forty or more, 11 respondents stay exploratory and participation is the
+only fix. Do not finalise limitation 6 in the district note until the
+denominator is known.
+
+A high response rate helps twice over: it tightens the interval, and it narrows
+the room for self-selection bias, which is the limitation the correction does
+not address.
+
+Two caveats the denominators do not remove. These estimates assume respondents
+are independent and the sampling roughly normal, which is approximate for
+ordinal data and unreliable at n=10 regardless of the correction. And they
+assume independent samples across cycles: matched respondents would detect
+considerably smaller changes.
 
 **On matched respondents.** Linking individuals across cycles would improve
 precision materially. It also conflicts with what participants were told — the
@@ -280,11 +312,24 @@ quietly.
 
 **Freeze:** items, wording, domain membership, the 1–4 scale, score thresholds.
 
-**Capture, which cycle 1 did not:**
+**Get now, for cycle 1 itself** — these are obtainable retroactively and the
+report should not publish without them, because they change section 5's numbers
+and remove a limitation from the district note:
 
-- Enrolment and staffing denominators per role, for response rates and the
-  finite-population correction.
-- Nothing else about scoring. Additions are safe; changes are not.
+- Students enrolled in the surveyed population. State which grades, since the
+  denominator must match who was invited rather than total district enrolment.
+- Certificated teaching staff.
+- Non-instructional staff. The consequential one: at a pool of ~15 the staff
+  findings become usable, at 40+ they stay exploratory.
+- Parent denominator, with the unit stated explicitly. 29 parent respondents
+  against households is a different rate than against individual parents or
+  guardians, and the two are not interchangeable. Pick one, record which.
+
+Then recompute the section 5 table, fill limitation 5 in the district note, and
+settle the staff guidance.
+
+**Capture for cycle 2:** the same denominators again, since enrolment moves.
+Nothing else about scoring — additions are safe, changes are not.
 
 **Fix, none of which affects comparability:**
 
