@@ -76,10 +76,16 @@ def contained(answer, quote):
     return True
 
 answers = []
+items = set()
 with open(CSV) as fh:
     for r in csv.DictReader(fh):
         if r['answer_text'].strip():
             answers.append((r['role'], norm(r['answer_text'])))
+        # The survey items. Ranked lists quote the question verbatim, and those
+        # appear in no answer -- fifteen of them were reported as words nobody
+        # said, swamping the one real alteration.
+        if r.get('question_text', '').strip():
+            items.add(norm(r['question_text']))
 
 text = REPORT.read_text()
 
@@ -96,6 +102,8 @@ ok = bad = unfound = 0
 problems = []
 for m in QUOTE.finditer(text):
     frag = norm(m.group(1))
+    if any(q == frag or q in frag or frag in q for q in items):
+        continue
     # Partial match: reports often trim a quote with an ellipsis.
     hits = {role for role, ans in answers if contained(ans, frag) or (len(frag) > 60 and frag[:60] in ans)}
     if not hits:
