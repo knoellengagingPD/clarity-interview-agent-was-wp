@@ -47,7 +47,33 @@ if not REPORT.exists():
 if not CSV.exists():
     sys.exit(f'No responses.csv under {EXPORT}. Run export-school.mjs first.')
 
-norm = lambda t: re.sub(r'\s+', ' ', t.lower()).strip()
+TYPO = {'\u2018': "'", '\u2019': "'", '\u02bc': "'", '\u201c': '"', '\u201d': '"',
+        '\u201e': '"', '\u2013': '-', '\u2014': '-', '\u2026': '...'}
+
+
+def norm(t):
+    """Firestore holds 3,594 straight apostrophes across pps-2026-27 and no
+    curly ones; the model writes curly. Without this, every quote containing an
+    apostrophe reads as never said by anybody."""
+    for a, b in TYPO.items():
+        t = t.replace(a, b)
+    return re.sub(r'\s+', ' ', t.lower()).strip()
+
+
+def contained(answer, quote):
+    """A report trims the middle of a long quote with an ellipsis, so a
+    quotation can be several fragments of one answer. Each must appear, in
+    order, in the same response."""
+    parts = [x.strip() for x in re.split(r'\s*\.\.\.\s*', quote) if len(x.strip()) >= 12]
+    if not parts:
+        return False
+    at = 0
+    for part in parts:
+        i = answer.find(part, at)
+        if i == -1:
+            return False
+        at = i + len(part)
+    return True
 
 answers = []
 with open(CSV) as fh:
@@ -71,7 +97,7 @@ problems = []
 for m in QUOTE.finditer(text):
     frag = norm(m.group(1))
     # Partial match: reports often trim a quote with an ellipsis.
-    hits = {role for role, ans in answers if frag in ans or (len(frag) > 60 and frag[:60] in ans)}
+    hits = {role for role, ans in answers if contained(ans, frag) or (len(frag) > 60 and frag[:60] in ans)}
     if not hits:
         unfound += 1
         problems.append(('NOT FOUND', '', m.group(1)[:78]))
