@@ -114,16 +114,34 @@ def ring(pct: float, label: str, title: str = '') -> str:
     # or strongly agreed" is about 450 units at 20pt against a 400-unit tile.
     # Who and what on the first line, what the figure means on the second.
     main, _, meaning = title.partition(' \u00b7 ')
+    #
+    # Wrap the first line too. Splitting on the middot fixed the caption that
+    # ran past the tile; it did not fix a question long enough to overrun on
+    # its own. "Students - My input is valued when decisions are made" is 53
+    # characters against a 400-unit tile at 20pt, and in a four-tile figure
+    # each caption ran into its neighbours -- the leftmost was clipped by the
+    # edge of the image and the three joins were unreadable. Arial averages
+    # about half the font size per character, so 20pt gives roughly 38.
+    MAX_CHARS = 38
+    lines: list[str] = []
+    for word in main.split():
+        if lines and len(lines[-1]) + 1 + len(word) <= MAX_CHARS:
+            lines[-1] += ' ' + word
+        else:
+            lines.append(word)
     cap = ''
     if title:
-        cap = (f'<text x="{CX}" y="{SIZE + 22}" fill="#1F2937" '
-               f'font-family="Arial, Helvetica, sans-serif" font-size="20" '
-               f'text-anchor="middle">{main}</text>')
+        for i, line in enumerate(lines):
+            cap += (f'<text x="{CX}" y="{SIZE + 22 + i * 23}" fill="#1F2937" '
+                    f'font-family="Arial, Helvetica, sans-serif" font-size="20" '
+                    f'text-anchor="middle">{line}</text>')
         if meaning:
-            cap += (f'<text x="{CX}" y="{SIZE + 45}" fill="#6B7280" '
+            cap += (f'<text x="{CX}" y="{SIZE + 22 + len(lines) * 23}" fill="#6B7280" '
                     f'font-family="Arial, Helvetica, sans-serif" font-size="16" '
                     f'text-anchor="middle">{meaning}</text>')
-    h = SIZE + (CAPTION if title else 0)
+    # The strip has to grow with the wrap, or a second line is drawn outside
+    # the viewBox and silently disappears when the PNG is rendered.
+    h = SIZE + (CAPTION + max(0, len(lines) - 1) * 23 if title else 0)
     return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {SIZE} {h}" width="{SIZE}" height="{h}" role="img" aria-label="{title or label}">
   <rect width="{SIZE}" height="{h}" fill="#FFFFFF"/>
   {cap}
@@ -164,7 +182,13 @@ STANDARD = [
     ('discipline-staff', 90, '90% Agree', 'Staff — Disciplined fairly · agreed or strongly agreed'),
     ('discipline-parents', 76, '76% Agree', 'Parents — Disciplined fairly · agreed or strongly agreed'),
     ('staff-communication', 60, '60% Agree', 'Staff — Communication among staff is open and honest · agreed or strongly agreed'),
+    # Put to all four roles word for word, so this is the second question in
+    # the instrument that can be compared across every group without a caveat
+    # (respect is the other). Verified against export-pps-2026-27/items.csv.
     ('input-valued-students', 65, '65% Agree', 'Students — My input is valued when decisions are made · agreed or strongly agreed'),
+    ('input-valued-teachers', 77, '77% Agree', 'Teachers — My input is valued when decisions are made · agreed or strongly agreed'),
+    ('input-valued-staff', 80, '80% Agree', 'Staff — My input is valued when decisions are made · agreed or strongly agreed'),
+    ('input-valued-parents', 78, '78% Agree', 'Parents — My input is valued when decisions are made · agreed or strongly agreed'),
     ('expect-students', 81, '81% Agree', 'Students — Adults expect every student to do well · agreed or strongly agreed'),
     ('expect-teachers', 96, '96% Agree', 'Teachers — Adults expect every student to do well · agreed or strongly agreed'),
     ('expect-staff', 90, '90% Agree', 'Staff — Adults expect every student to do well · agreed or strongly agreed'),

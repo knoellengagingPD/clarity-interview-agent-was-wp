@@ -1,12 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 454" width="1600" height="454"><rect width="1600" height="454" fill="#FFFFFF"/><g transform="translate(0,0)">
-  <text x="200.0" y="422" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">Students — Overall, this is a good school</text><text x="200.0" y="445" fill="#6B7280" font-family="Arial, Helvetica, sans-serif" font-size="16" text-anchor="middle">agreed or strongly agreed</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 481" width="1600" height="481"><rect width="1600" height="481" fill="#FFFFFF"/><g transform="translate(0,0)">
+  <text x="200.0" y="422" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">Students — Overall, this is a good</text><text x="200.0" y="445" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">school</text><text x="200.0" y="468" fill="#6B7280" font-family="Arial, Helvetica, sans-serif" font-size="16" text-anchor="middle">agreed or strongly agreed</text>
   <path d="M 200.00 66.00 A 134.0 134.0 0 1 1 108.95 101.68" fill="none" stroke="#2E7D32" stroke-width="84" stroke-linecap="butt"/><polygon points="68.87,58.39 149.04,144.97 135.45,82.57" fill="#2E7D32"/>
   <defs><path id="lbl" d="M 149.80 324.24 A 134.0 134.0 0 0 0 250.20 324.24"/></defs>
   <text fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">
     <textPath href="#lbl" startOffset="50%" text-anchor="middle" dominant-baseline="central">92%</textPath>
   </text>
 </g><g transform="translate(400,0)">
-  <text x="200.0" y="422" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">Teachers — Overall, this is a good school</text><text x="200.0" y="445" fill="#6B7280" font-family="Arial, Helvetica, sans-serif" font-size="16" text-anchor="middle">agreed or strongly agreed</text>
+  <text x="200.0" y="422" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">Teachers — Overall, this is a good</text><text x="200.0" y="445" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">school</text><text x="200.0" y="468" fill="#6B7280" font-family="Arial, Helvetica, sans-serif" font-size="16" text-anchor="middle">agreed or strongly agreed</text>
   <path d="M 200.00 66.00 A 134.0 134.0 0 1 1 167.58 69.98" fill="none" stroke="#2E7D32" stroke-width="84" stroke-linecap="butt"/><polygon points="153.31,12.73 181.86,127.23 200.00,66.00" fill="#2E7D32"/>
   <defs><path id="lbl" d="M 149.80 324.24 A 134.0 134.0 0 0 0 250.20 324.24"/></defs>
   <text fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">
@@ -20,7 +20,7 @@
     <textPath href="#lbl" startOffset="50%" text-anchor="middle" dominant-baseline="central">100%</textPath>
   </text>
 </g><g transform="translate(1200,0)">
-  <text x="200.0" y="422" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">Parents — Overall, this is a good school</text><text x="200.0" y="445" fill="#6B7280" font-family="Arial, Helvetica, sans-serif" font-size="16" text-anchor="middle">agreed or strongly agreed</text>
+  <text x="200.0" y="422" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">Parents — Overall, this is a good</text><text x="200.0" y="445" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">school</text><text x="200.0" y="468" fill="#6B7280" font-family="Arial, Helvetica, sans-serif" font-size="16" text-anchor="middle">agreed or strongly agreed</text>
   <path d="M 200.00 66.00 A 134.0 134.0 0 1 1 97.35 113.87" fill="none" stroke="#2E7D32" stroke-width="84" stroke-linecap="butt"/><polygon points="52.15,75.94 142.55,151.79 121.24,91.59" fill="#2E7D32"/>
   <defs><path id="lbl" d="M 149.80 324.24 A 134.0 134.0 0 0 0 250.20 324.24"/></defs>
   <text fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">
