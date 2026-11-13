@@ -1,6 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400" role="img" aria-label="100% Agree">
   <rect width="400" height="400" fill="#FFFFFF"/>
   <circle cx="200.0" cy="200.0" r="134.0" fill="none" stroke="#2E7D32" stroke-width="84"/>
-  <text x="200" y="334" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif"
-        font-size="30" font-weight="700" text-anchor="middle" dominant-baseline="central">100% Agree</text>
+  <defs><path id="lbl" d="M 100.42 289.66 A 134.0 134.0 0 0 0 299.58 289.66"/></defs>
+  <text fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">
+    <textPath href="#lbl" startOffset="50%" text-anchor="middle" dominant-baseline="central">100% Agree</textPath>
+  </text>
 </svg>

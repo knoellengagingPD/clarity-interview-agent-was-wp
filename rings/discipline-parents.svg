@@ -1,6 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400" role="img" aria-label="76% Agree">
   <rect width="400" height="400" fill="#FFFFFF"/>
-  <path d="M 200.00 66.00 A 134.0 134.0 0 1 1 68.64 226.49" fill="none" stroke="#2E7D32" stroke-width="84" stroke-linecap="butt"/><polygon points="10.81,238.15 126.48,214.82 66.26,191.59" fill="#2E7D32"/>
-  <text x="200" y="334" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif"
-        font-size="30" font-weight="700" text-anchor="middle" dominant-baseline="central">76% Agree</text>
+  <path d="M 291.73 102.32 A 134.0 134.0 0 1 1 87.36 127.41" fill="none" stroke="#2E7D32" stroke-width="84" stroke-linecap="butt"/><polygon points="37.77,95.45 136.96,159.37 108.27,102.32" fill="#2E7D32"/>
+  <defs><path id="lbl" d="M 100.42 289.66 A 134.0 134.0 0 0 0 299.58 289.66"/></defs>
+  <text fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">
+    <textPath href="#lbl" startOffset="50%" text-anchor="middle" dominant-baseline="central">76% Agree</textPath>
+  </text>
 </svg>

@@ -50,9 +50,22 @@ def ring(pct: float, label: str) -> str:
             f'stroke="{GREEN}" stroke-width="{BAND}"/>'
         )
     else:
-        arc = max(0.0, total - HEAD_DEG)
-        x0, y0 = pt(0, R_MID)
-        x1, y1 = pt(arc, R_MID)
+        # The arc is centred on six o'clock rather than started at twelve.
+        #
+        # Started at twelve, the band stops short of the bottom for anything
+        # under about 64% -- 43% reaches only 155 degrees -- so a label at the
+        # bottom sits on white, and a label centred on the arc instead ends up
+        # running vertically down the side where nobody can read it. Centred
+        # on the bottom, the label is always horizontal and always on green,
+        # at any percentage. At 95% this is within a few degrees of a
+        # twelve-o'clock start anyway, so the familiar shape is unchanged.
+        start = 180.0 - total / 2.0
+        # A degree of overlap into the head: butted exactly, the arc's flat
+        # end and the triangle's base leave a hairline seam when rendered.
+        arc_end = 180.0 + total / 2.0 - HEAD_DEG + 1.0
+        x0, y0 = pt(start, R_MID)
+        x1, y1 = pt(arc_end, R_MID)
+        arc = arc_end - start
         large = 1 if arc > 180 else 0
         body = (
             f'<path d="M {x0:.2f} {y0:.2f} A {R_MID} {R_MID} 0 {large} 1 '
@@ -63,21 +76,38 @@ def ring(pct: float, label: str) -> str:
         # with its apex on the mid-radius a little further round.
         # The base overhangs the band on both sides, which is what makes it
         # read as an arrowhead rather than a spike.
-        bx1, by1 = pt(arc, R_OUT + 17)
-        bx2, by2 = pt(arc, R_IN - 17)
-        tipx, tipy = pt(total, R_MID)
+        bx1, by1 = pt(arc_end, R_OUT + 17)
+        bx2, by2 = pt(arc_end, R_IN - 17)
+        tipx, tipy = pt(180.0 + total / 2.0, R_MID)
         body += (
             f'<polygon points="{bx1:.2f},{by1:.2f} {bx2:.2f},{by2:.2f} '
             f'{tipx:.2f},{tipy:.2f}" fill="{GREEN}"/>'
         )
 
-    # Label sits in the band at the bottom, white on green, as in the sample.
-    lx, ly = pt(180, R_MID)
+    # The label follows the band, centred on the middle of the drawn arc.
+    #
+    # Two things had to be fixed here. Set straight, a centred line of text at
+    # the bottom of the ring runs off the green at both ends and into the
+    # hole: the band is 84 units thick and curved, the text a 150-unit
+    # horizontal chord. And anchored at the bottom, it falls on white for any
+    # figure below about 64%, where the arc stops short of six o'clock -- 43%
+    # reaches only 155 degrees. Centring on the arc's own midpoint keeps every
+    # letter on green at any percentage.
+    #
+    # The sweep direction decides which way up the text sits: along the lower
+    # half of a circle it must run anticlockwise, or it comes out mirrored.
+    # Always the bottom, always anticlockwise so the text is the right way up.
+    span = min(48.0, max(20.0, total / 2.0 - 6.0))
+    ax, ay = pt(180.0 + span, R_MID)
+    bx, by = pt(180.0 - span, R_MID)
+    sweep = 0
     return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {SIZE} {SIZE}" width="{SIZE}" height="{SIZE}" role="img" aria-label="{label}">
   <rect width="{SIZE}" height="{SIZE}" fill="#FFFFFF"/>
   {body}
-  <text x="{lx:.0f}" y="{ly:.0f}" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif"
-        font-size="30" font-weight="700" text-anchor="middle" dominant-baseline="central">{label}</text>
+  <defs><path id="lbl" d="M {ax:.2f} {ay:.2f} A {R_MID} {R_MID} 0 0 {sweep} {bx:.2f} {by:.2f}"/></defs>
+  <text fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">
+    <textPath href="#lbl" startOffset="50%" text-anchor="middle" dominant-baseline="central">{label}</textPath>
+  </text>
 </svg>
 '''
 
