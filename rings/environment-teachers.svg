@@ -1,8 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400" role="img" aria-label="87% Agree">
-  <rect width="400" height="400" fill="#FFFFFF"/>
-  <path d="M 253.22 77.02 A 134.0 134.0 0 1 1 118.61 93.55" fill="none" stroke="#2E7D32" stroke-width="84" stroke-linecap="butt"/><polygon points="82.78,46.68 154.45,140.42 146.78,77.02" fill="#2E7D32"/>
-  <defs><path id="lbl" d="M 100.42 289.66 A 134.0 134.0 0 0 0 299.58 289.66"/></defs>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 458" width="400" height="458" role="img" aria-label="Teachers — Environment · agreed or strongly agreed">
+  <rect width="400" height="458" fill="#FFFFFF"/>
+  <text x="200.0" y="422" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">Teachers — Environment</text><text x="200.0" y="445" fill="#6B7280" font-family="Arial, Helvetica, sans-serif" font-size="16" text-anchor="middle">agreed or strongly agreed</text>
+  <path d="M 200.00 66.00 A 134.0 134.0 0 1 1 83.03 134.63" fill="none" stroke="#2E7D32" stroke-width="84" stroke-linecap="butt"/><polygon points="31.53,105.84 134.53,163.41 102.32,108.27" fill="#2E7D32"/>
+  <defs><path id="lbl" d="M 149.80 324.24 A 134.0 134.0 0 0 0 250.20 324.24"/></defs>
   <text fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">
-    <textPath href="#lbl" startOffset="50%" text-anchor="middle" dominant-baseline="central">87% Agree</textPath>
+    <textPath href="#lbl" startOffset="50%" text-anchor="middle" dominant-baseline="central">87%</textPath>
   </text>
 </svg>

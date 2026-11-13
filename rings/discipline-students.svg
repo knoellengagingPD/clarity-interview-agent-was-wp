@@ -1,8 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400" role="img" aria-label="55% Agree">
-  <rect width="400" height="400" fill="#FFFFFF"/>
-  <path d="M 332.35 179.04 A 134.0 134.0 0 1 1 66.51 211.68" fill="none" stroke="#2E7D32" stroke-width="84" stroke-linecap="butt"/><polygon points="7.73,216.82 125.29,206.54 67.65,179.04" fill="#2E7D32"/>
-  <defs><path id="lbl" d="M 100.42 289.66 A 134.0 134.0 0 0 0 299.58 289.66"/></defs>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 458" width="400" height="458" role="img" aria-label="Students — Disciplined fairly · agreed or strongly agreed">
+  <rect width="400" height="458" fill="#FFFFFF"/>
+  <text x="200.0" y="422" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">Students — Disciplined fairly</text><text x="200.0" y="445" fill="#6B7280" font-family="Arial, Helvetica, sans-serif" font-size="16" text-anchor="middle">agreed or strongly agreed</text>
+  <path d="M 200.00 66.00 A 134.0 134.0 0 1 1 190.65 333.67" fill="none" stroke="#2E7D32" stroke-width="84" stroke-linecap="butt"/><polygon points="186.54,392.53 194.77,274.82 158.59,327.44" fill="#2E7D32"/>
+  <defs><path id="lbl" d="M 211.68 333.49 A 134.0 134.0 0 0 0 301.13 287.91"/></defs>
   <text fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">
-    <textPath href="#lbl" startOffset="50%" text-anchor="middle" dominant-baseline="central">55% Agree</textPath>
+    <textPath href="#lbl" startOffset="50%" text-anchor="middle" dominant-baseline="central">55%</textPath>
   </text>
 </svg>
