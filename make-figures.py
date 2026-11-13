@@ -29,6 +29,14 @@ GROUPS = {
     'fig-safety':    ['safety-students', 'safety-teachers', 'safety-staff', 'safety-parents'],
     'fig-lowest':    ['ai-parents', 'ai-teachers', 'ai-students', 'discipline-students', 'staff-communication'],
     'fig-input':     ['input-valued-students'],
+    # Four more through the back half, each tied to a rated question rather
+    # than decorating prose. Resources is four different questions, one per
+    # role, so each tile names its own -- the report's limitation 3 forbids
+    # treating them as one comparison.
+    'fig-expect':    ['expect-students', 'expect-teachers', 'expect-staff', 'expect-parents'],
+    'fig-safe':      ['safe-students', 'safe-teachers', 'safe-staff'],
+    'fig-concern':   ['concern-students', 'concern-teachers', 'concern-staff'],
+    'fig-resources': ['res-students', 'res-teachers', 'res-staff', 'res-parents'],
 }
 
 

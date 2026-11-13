@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 454" width="1600" height="454"><rect width="1600" height="454" fill="#FFFFFF"/><g transform="translate(0,0)">
+  <text x="200.0" y="422" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">Students — Resources and materials I need to learn</text><text x="200.0" y="445" fill="#6B7280" font-family="Arial, Helvetica, sans-serif" font-size="16" text-anchor="middle">agreed or strongly agreed</text>
+  <path d="M 200.00 66.00 A 134.0 134.0 0 1 1 67.18 182.28" fill="none" stroke="#2E7D32" stroke-width="84" stroke-linecap="butt"/><polygon points="8.70,174.47 125.66,190.08 75.41,150.67" fill="#2E7D32"/>
+  <defs><path id="lbl" d="M 149.80 324.24 A 134.0 134.0 0 0 0 250.20 324.24"/></defs>
+  <text fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">
+    <textPath href="#lbl" startOffset="50%" text-anchor="middle" dominant-baseline="central">81%</textPath>
+  </text>
+</g><g transform="translate(400,0)">
+  <text x="200.0" y="422" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">Teachers — Adequate instructional materials</text><text x="200.0" y="445" fill="#6B7280" font-family="Arial, Helvetica, sans-serif" font-size="16" text-anchor="middle">agreed or strongly agreed</text>
+  <path d="M 200.00 66.00 A 134.0 134.0 0 1 1 79.15 142.10" fill="none" stroke="#2E7D32" stroke-width="84" stroke-linecap="butt"/><polygon points="25.95,116.61 132.36,167.59 96.75,114.59" fill="#2E7D32"/>
+  <defs><path id="lbl" d="M 149.80 324.24 A 134.0 134.0 0 0 0 250.20 324.24"/></defs>
+  <text fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">
+    <textPath href="#lbl" startOffset="50%" text-anchor="middle" dominant-baseline="central">86%</textPath>
+  </text>
+</g><g transform="translate(800,0)">
+  <text x="200.0" y="422" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">Staff — Materials and supplies I need</text><text x="200.0" y="445" fill="#6B7280" font-family="Arial, Helvetica, sans-serif" font-size="16" text-anchor="middle">agreed or strongly agreed</text>
+  <path d="M 200.00 66.00 A 134.0 134.0 0 1 1 97.35 113.87" fill="none" stroke="#2E7D32" stroke-width="84" stroke-linecap="butt"/><polygon points="52.15,75.94 142.55,151.79 121.24,91.59" fill="#2E7D32"/>
+  <defs><path id="lbl" d="M 149.80 324.24 A 134.0 134.0 0 0 0 250.20 324.24"/></defs>
+  <text fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">
+    <textPath href="#lbl" startOffset="50%" text-anchor="middle" dominant-baseline="central">90%</textPath>
+  </text>
+</g><g transform="translate(1200,0)">
+  <text x="200.0" y="422" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">Parents — My child has access to resources</text><text x="200.0" y="445" fill="#6B7280" font-family="Arial, Helvetica, sans-serif" font-size="16" text-anchor="middle">agreed or strongly agreed</text>
+  <path d="M 200.00 66.00 A 134.0 134.0 0 1 1 79.15 142.10" fill="none" stroke="#2E7D32" stroke-width="84" stroke-linecap="butt"/><polygon points="25.95,116.61 132.36,167.59 96.75,114.59" fill="#2E7D32"/>
+  <defs><path id="lbl" d="M 149.80 324.24 A 134.0 134.0 0 0 0 250.20 324.24"/></defs>
+  <text fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">
+    <textPath href="#lbl" startOffset="50%" text-anchor="middle" dominant-baseline="central">86%</textPath>
+  </text>
+</g></svg>

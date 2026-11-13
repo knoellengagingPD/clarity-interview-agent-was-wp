@@ -165,6 +165,20 @@ STANDARD = [
     ('discipline-parents', 76, '76% Agree', 'Parents — Disciplined fairly · agreed or strongly agreed'),
     ('staff-communication', 60, '60% Agree', 'Staff — Communication among staff is open and honest · agreed or strongly agreed'),
     ('input-valued-students', 65, '65% Agree', 'Students — My input is valued when decisions are made · agreed or strongly agreed'),
+    ('expect-students', 81, '81% Agree', 'Students — Adults expect every student to do well · agreed or strongly agreed'),
+    ('expect-teachers', 96, '96% Agree', 'Teachers — Adults expect every student to do well · agreed or strongly agreed'),
+    ('expect-staff', 90, '90% Agree', 'Staff — Adults expect every student to do well · agreed or strongly agreed'),
+    ('expect-parents', 91, '91% Agree', 'Parents — Adults expect every student to do well · agreed or strongly agreed'),
+    ('safe-students', 94, '94% Agree', 'Students — I feel safe at this school · agreed or strongly agreed'),
+    ('safe-teachers', 97, '97% Agree', 'Teachers — I feel safe at this school · agreed or strongly agreed'),
+    ('safe-staff', 91, '91% Agree', 'Staff — I feel safe at this school · agreed or strongly agreed'),
+    ('concern-students', 78, '78% Agree', 'Students — Concerns are taken seriously · agreed or strongly agreed'),
+    ('concern-teachers', 87, '87% Agree', 'Teachers — Concerns are taken seriously · agreed or strongly agreed'),
+    ('concern-staff', 90, '90% Agree', 'Staff — Concerns are taken seriously · agreed or strongly agreed'),
+    ('res-students', 81, '81% Agree', 'Students — Resources and materials I need to learn · agreed or strongly agreed'),
+    ('res-teachers', 86, '86% Agree', 'Teachers — Adequate instructional materials · agreed or strongly agreed'),
+    ('res-staff', 90, '90% Agree', 'Staff — Materials and supplies I need · agreed or strongly agreed'),
+    ('res-parents', 86, '86% Agree', 'Parents — My child has access to resources · agreed or strongly agreed'),
 ]
 
 ap = argparse.ArgumentParser()
