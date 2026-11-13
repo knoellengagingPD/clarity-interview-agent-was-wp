@@ -16,7 +16,7 @@ at any size. Nothing here reads the export; the figures are passed in, so a
 ring can never disagree with the number beside it in the text.
 """
 import argparse
-import math
+import math, re
 import os
 
 GREEN = '#2E7D32'
@@ -39,7 +39,27 @@ def pt(deg, r):
     return CX + r * math.cos(a), CY + r * math.sin(a)
 
 
-def ring(pct: float, label: str, title: str = '') -> str:
+def ring(pct: float, label: str, title: str = '', uid: str = '') -> str:
+    """One ring. `uid` makes the label's path id unique.
+
+    WHY uid EXISTS
+
+    The label is drawn along a <path id="lbl"> inside <defs>, referenced by
+    <textPath href="#lbl">. On its own that is fine. Composed into a figure,
+    every tile brought its own `id="lbl"`, so a four- or five-tile figure
+    defined the same id four or five times and every textPath in it resolved
+    to whichever one the renderer picked -- in practice the last.
+
+    So all the labels were drawn along ONE tile's arc. Mostly that merely put
+    them in the wrong place, which reads as a style quirk. On fig-lowest it
+    deleted one: the figure's last tile is 60%, its label arc sits around the
+    lower left, and the first tile is 43% -- whose band does not reach there.
+    White text, white background, no label at all. Reported from the document
+    as "Needs 43% on First chart - Parents", which is exactly right.
+
+    This is also the likely cause of the earlier complaint that the white text
+    was not fully on the green, which was treated as a geometry problem.
+    """
     pct = max(0.0, min(100.0, float(pct)))
     total = pct * 3.6
 
@@ -141,14 +161,15 @@ def ring(pct: float, label: str, title: str = '') -> str:
                     f'text-anchor="middle">{meaning}</text>')
     # The strip has to grow with the wrap, or a second line is drawn outside
     # the viewBox and silently disappears when the PNG is rendered.
+    lid = re.sub(r'[^A-Za-z0-9_-]', '', uid) or f'{int(total * 100)}'
     h = SIZE + (CAPTION + max(0, len(lines) - 1) * 23 if title else 0)
     return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {SIZE} {h}" width="{SIZE}" height="{h}" role="img" aria-label="{title or label}">
   <rect width="{SIZE}" height="{h}" fill="#FFFFFF"/>
   {cap}
   {body}
-  <defs><path id="lbl" d="M {ax:.2f} {ay:.2f} A {R_MID} {R_MID} 0 0 {sweep} {bx:.2f} {by:.2f}"/></defs>
+  <defs><path id="lbl{lid}" d="M {ax:.2f} {ay:.2f} A {R_MID} {R_MID} 0 0 {sweep} {bx:.2f} {by:.2f}"/></defs>
   <text fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">
-    <textPath href="#lbl" startOffset="50%" text-anchor="middle" dominant-baseline="central">{label}</textPath>
+    <textPath href="#lbl{lid}" startOffset="50%" text-anchor="middle" dominant-baseline="central">{label}</textPath>
   </text>
 </svg>
 '''
@@ -214,6 +235,12 @@ STANDARD = [
     ('peer-staff', 90, '90% Agree', 'Staff — Students treat each other with respect · agreed or strongly agreed'),
     ('bully-students', 64, '64% Agree', 'Students — Bullying is rare at this school · agreed or strongly agreed'),
     ('bully-staff', 90, '90% Agree', 'Staff — Bullying is rare at this school · agreed or strongly agreed'),
+    # Whether bullying gets DEALT WITH, which is a different question from
+    # whether it is rare -- and a different question for each role, so every
+    # tile names its own. Limitation 3 forbids reading these as one measure.
+    ('bully-act-students', 77, '77% Agree', 'Students — If I report bullying, an adult will do something · agreed or strongly agreed'),
+    ('bully-act-teachers', 97, '97% Agree', 'Teachers — Reported bullying gets resolved · agreed or strongly agreed'),
+    ('bully-act-parents', 72, '72% Agree', 'Parents — The school deals effectively with bullying · agreed or strongly agreed'),
 ]
 
 ap = argparse.ArgumentParser()

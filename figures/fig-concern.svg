@@ -1,22 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 481" width="1200" height="481"><rect width="1200" height="481" fill="#FFFFFF"/><g transform="translate(0,0)">
   <text x="200.0" y="422" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">Students — Concerns are taken</text><text x="200.0" y="445" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">seriously</text><text x="200.0" y="468" fill="#6B7280" font-family="Arial, Helvetica, sans-serif" font-size="16" text-anchor="middle">agreed or strongly agreed</text>
   <path d="M 200.00 66.00 A 134.0 134.0 0 1 1 66.21 207.48" fill="none" stroke="#2E7D32" stroke-width="84" stroke-linecap="butt"/><polygon points="7.30,210.77 125.12,204.19 68.37,174.89" fill="#2E7D32"/>
-  <defs><path id="lbl" d="M 149.80 324.24 A 134.0 134.0 0 0 0 250.20 324.24"/></defs>
+  <defs><path id="lblconcern-students" d="M 149.80 324.24 A 134.0 134.0 0 0 0 250.20 324.24"/></defs>
   <text fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">
-    <textPath href="#lbl" startOffset="50%" text-anchor="middle" dominant-baseline="central">78%</textPath>
+    <textPath href="#lblconcern-students" startOffset="50%" text-anchor="middle" dominant-baseline="central">78%</textPath>
   </text>
 </g><g transform="translate(400,0)">
   <text x="200.0" y="422" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">Teachers — Concerns are taken</text><text x="200.0" y="445" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">seriously</text><text x="200.0" y="468" fill="#6B7280" font-family="Arial, Helvetica, sans-serif" font-size="16" text-anchor="middle">agreed or strongly agreed</text>
   <path d="M 200.00 66.00 A 134.0 134.0 0 1 1 83.03 134.63" fill="none" stroke="#2E7D32" stroke-width="84" stroke-linecap="butt"/><polygon points="31.53,105.84 134.53,163.41 102.32,108.27" fill="#2E7D32"/>
-  <defs><path id="lbl" d="M 149.80 324.24 A 134.0 134.0 0 0 0 250.20 324.24"/></defs>
+  <defs><path id="lblconcern-teachers" d="M 149.80 324.24 A 134.0 134.0 0 0 0 250.20 324.24"/></defs>
   <text fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">
-    <textPath href="#lbl" startOffset="50%" text-anchor="middle" dominant-baseline="central">87%</textPath>
+    <textPath href="#lblconcern-teachers" startOffset="50%" text-anchor="middle" dominant-baseline="central">87%</textPath>
   </text>
 </g><g transform="translate(800,0)">
   <text x="200.0" y="422" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">Staff — Concerns are taken seriously</text><text x="200.0" y="445" fill="#6B7280" font-family="Arial, Helvetica, sans-serif" font-size="16" text-anchor="middle">agreed or strongly agreed</text>
   <path d="M 200.00 66.00 A 134.0 134.0 0 1 1 97.35 113.87" fill="none" stroke="#2E7D32" stroke-width="84" stroke-linecap="butt"/><polygon points="52.15,75.94 142.55,151.79 121.24,91.59" fill="#2E7D32"/>
-  <defs><path id="lbl" d="M 149.80 324.24 A 134.0 134.0 0 0 0 250.20 324.24"/></defs>
+  <defs><path id="lblconcern-staff" d="M 149.80 324.24 A 134.0 134.0 0 0 0 250.20 324.24"/></defs>
   <text fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">
-    <textPath href="#lbl" startOffset="50%" text-anchor="middle" dominant-baseline="central">90%</textPath>
+    <textPath href="#lblconcern-staff" startOffset="50%" text-anchor="middle" dominant-baseline="central">90%</textPath>
   </text>
 </g></svg>

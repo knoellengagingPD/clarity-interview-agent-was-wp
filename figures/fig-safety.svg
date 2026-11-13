@@ -1,29 +1,29 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 458" width="1600" height="458"><rect width="1600" height="458" fill="#FFFFFF"/><g transform="translate(0,0)">
   <text x="200.0" y="422" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">Students — Safety</text><text x="200.0" y="445" fill="#6B7280" font-family="Arial, Helvetica, sans-serif" font-size="16" text-anchor="middle">agreed or strongly agreed</text>
   <path d="M 200.00 66.00 A 134.0 134.0 0 1 1 66.33 190.65" fill="none" stroke="#2E7D32" stroke-width="84" stroke-linecap="butt"/><polygon points="7.47,186.54 125.18,194.77 72.56,158.59" fill="#2E7D32"/>
-  <defs><path id="lbl" d="M 149.80 324.24 A 134.0 134.0 0 0 0 250.20 324.24"/></defs>
+  <defs><path id="lblsafety-students" d="M 149.80 324.24 A 134.0 134.0 0 0 0 250.20 324.24"/></defs>
   <text fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">
-    <textPath href="#lbl" startOffset="50%" text-anchor="middle" dominant-baseline="central">80%</textPath>
+    <textPath href="#lblsafety-students" startOffset="50%" text-anchor="middle" dominant-baseline="central">80%</textPath>
   </text>
 </g><g transform="translate(400,0)">
   <text x="200.0" y="422" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">Teachers — Safety</text><text x="200.0" y="445" fill="#6B7280" font-family="Arial, Helvetica, sans-serif" font-size="16" text-anchor="middle">agreed or strongly agreed</text>
   <path d="M 200.00 66.00 A 134.0 134.0 0 1 1 136.27 82.13" fill="none" stroke="#2E7D32" stroke-width="84" stroke-linecap="butt"/><polygon points="108.20,30.23 164.33,134.03 166.68,70.21" fill="#2E7D32"/>
-  <defs><path id="lbl" d="M 149.80 324.24 A 134.0 134.0 0 0 0 250.20 324.24"/></defs>
+  <defs><path id="lblsafety-teachers" d="M 149.80 324.24 A 134.0 134.0 0 0 0 250.20 324.24"/></defs>
   <text fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">
-    <textPath href="#lbl" startOffset="50%" text-anchor="middle" dominant-baseline="central">96%</textPath>
+    <textPath href="#lblsafety-teachers" startOffset="50%" text-anchor="middle" dominant-baseline="central">96%</textPath>
   </text>
 </g><g transform="translate(800,0)">
   <text x="200.0" y="422" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">Staff — Safety</text><text x="200.0" y="445" fill="#6B7280" font-family="Arial, Helvetica, sans-serif" font-size="16" text-anchor="middle">agreed or strongly agreed</text>
   <path d="M 200.00 66.00 A 134.0 134.0 0 1 1 87.36 127.41" fill="none" stroke="#2E7D32" stroke-width="84" stroke-linecap="butt"/><polygon points="37.77,95.45 136.96,159.37 108.27,102.32" fill="#2E7D32"/>
-  <defs><path id="lbl" d="M 149.80 324.24 A 134.0 134.0 0 0 0 250.20 324.24"/></defs>
+  <defs><path id="lblsafety-staff" d="M 149.80 324.24 A 134.0 134.0 0 0 0 250.20 324.24"/></defs>
   <text fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">
-    <textPath href="#lbl" startOffset="50%" text-anchor="middle" dominant-baseline="central">88%</textPath>
+    <textPath href="#lblsafety-staff" startOffset="50%" text-anchor="middle" dominant-baseline="central">88%</textPath>
   </text>
 </g><g transform="translate(1200,0)">
   <text x="200.0" y="422" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">Parents — Safety</text><text x="200.0" y="445" fill="#6B7280" font-family="Arial, Helvetica, sans-serif" font-size="16" text-anchor="middle">agreed or strongly agreed</text>
   <path d="M 200.00 66.00 A 134.0 134.0 0 1 1 75.76 149.80" fill="none" stroke="#2E7D32" stroke-width="84" stroke-linecap="butt"/><polygon points="21.05,127.70 130.46,171.90 91.59,121.24" fill="#2E7D32"/>
-  <defs><path id="lbl" d="M 149.80 324.24 A 134.0 134.0 0 0 0 250.20 324.24"/></defs>
+  <defs><path id="lblsafety-parents" d="M 149.80 324.24 A 134.0 134.0 0 0 0 250.20 324.24"/></defs>
   <text fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">
-    <textPath href="#lbl" startOffset="50%" text-anchor="middle" dominant-baseline="central">85%</textPath>
+    <textPath href="#lblsafety-parents" startOffset="50%" text-anchor="middle" dominant-baseline="central">85%</textPath>
   </text>
 </g></svg>

@@ -45,13 +45,22 @@ GROUPS = {
     # Peer conduct pairs two questions, each put to students and staff, so the
     # gap can be read on both without implying they are one measure.
     'fig-peer':      ['peer-students', 'peer-staff', 'bully-students', 'bully-staff'],
+    # Bullying split in two, because "is it rare" and "is it dealt with" are
+    # different questions and the report should not blur them. The first is one
+    # item put to two roles, so it compares directly; the second is three
+    # different items, one per role, each named on its own tile.
+    'fig-bully-rare': ['bully-students', 'bully-staff'],
+    'fig-bully-act':  ['bully-act-students', 'bully-act-teachers', 'bully-act-parents'],
 }
 
 
 def inner(name):
     """One ring's markup, stripped of its own <svg> wrapper and backing rect."""
     pct, label, title = BY[name]
-    s = ring(pct, label, title)
+    # The ring name makes the label's path id unique within the figure. Without
+    # it every tile defined id="lbl" and all the labels followed one tile's
+    # arc -- see the note on ring()'s uid argument.
+    s = ring(pct, label, title, uid=name)
     s = re.sub(r'^.*?<rect[^>]*/>', '', s, flags=re.S)
     return s.rsplit('</svg>', 1)[0]
 

@@ -2,8 +2,8 @@
   <rect width="400" height="481" fill="#FFFFFF"/>
   <text x="200.0" y="422" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">Staff — Communication among staff is</text><text x="200.0" y="445" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">open and honest</text><text x="200.0" y="468" fill="#6B7280" font-family="Arial, Helvetica, sans-serif" font-size="16" text-anchor="middle">agreed or strongly agreed</text>
   <path d="M 200.00 66.00 A 134.0 134.0 0 1 1 149.80 324.24" fill="none" stroke="#2E7D32" stroke-width="84" stroke-linecap="butt"/><polygon points="127.70,378.95 171.90,269.54 121.24,308.41" fill="#2E7D32"/>
-  <defs><path id="lbl" d="M 169.86 330.57 A 134.0 134.0 0 0 0 269.02 314.86"/></defs>
+  <defs><path id="lbl21600" d="M 169.86 330.57 A 134.0 134.0 0 0 0 269.02 314.86"/></defs>
   <text fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">
-    <textPath href="#lbl" startOffset="50%" text-anchor="middle" dominant-baseline="central">60%</textPath>
+    <textPath href="#lbl21600" startOffset="50%" text-anchor="middle" dominant-baseline="central">60%</textPath>
   </text>
 </svg>

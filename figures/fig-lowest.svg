@@ -1,36 +1,36 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2000 481" width="2000" height="481"><rect width="2000" height="481" fill="#FFFFFF"/><g transform="translate(0,0)">
   <text x="200.0" y="422" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">Parents — AI readiness</text><text x="200.0" y="445" fill="#6B7280" font-family="Arial, Helvetica, sans-serif" font-size="16" text-anchor="middle">felt prepared</text>
   <path d="M 200.00 66.00 A 134.0 134.0 0 0 1 284.69 303.84" fill="none" stroke="#2E7D32" stroke-width="84" stroke-linecap="butt"/><polygon points="321.98,349.56 247.40,258.12 257.05,321.25" fill="#2E7D32"/>
-  <defs><path id="lbl" d="M 299.89 289.32 A 134.0 134.0 0 0 0 333.90 194.86"/></defs>
+  <defs><path id="lblai-parents" d="M 299.89 289.32 A 134.0 134.0 0 0 0 333.90 194.86"/></defs>
   <text fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">
-    <textPath href="#lbl" startOffset="50%" text-anchor="middle" dominant-baseline="central">43%</textPath>
+    <textPath href="#lblai-parents" startOffset="50%" text-anchor="middle" dominant-baseline="central">43%</textPath>
   </text>
 </g><g transform="translate(400,0)">
   <text x="200.0" y="422" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">Teachers — AI readiness</text><text x="200.0" y="445" fill="#6B7280" font-family="Arial, Helvetica, sans-serif" font-size="16" text-anchor="middle">felt prepared</text>
   <path d="M 200.00 66.00 A 134.0 134.0 0 0 1 215.87 333.06" fill="none" stroke="#2E7D32" stroke-width="84" stroke-linecap="butt"/><polygon points="222.85,391.64 208.88,274.47 183.21,332.94" fill="#2E7D32"/>
-  <defs><path id="lbl" d="M 236.49 328.94 A 134.0 134.0 0 0 0 315.81 267.40"/></defs>
+  <defs><path id="lblai-teachers" d="M 236.49 328.94 A 134.0 134.0 0 0 0 315.81 267.40"/></defs>
   <text fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">
-    <textPath href="#lbl" startOffset="50%" text-anchor="middle" dominant-baseline="central">52%</textPath>
+    <textPath href="#lblai-teachers" startOffset="50%" text-anchor="middle" dominant-baseline="central">52%</textPath>
   </text>
 </g><g transform="translate(800,0)">
   <text x="200.0" y="422" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">Students — AI readiness</text><text x="200.0" y="445" fill="#6B7280" font-family="Arial, Helvetica, sans-serif" font-size="16" text-anchor="middle">felt prepared</text>
   <path d="M 200.00 66.00 A 134.0 134.0 0 1 1 199.06 334.00" fill="none" stroke="#2E7D32" stroke-width="84" stroke-linecap="butt"/><polygon points="198.65,393.00 199.48,275.00 166.68,329.79" fill="#2E7D32"/>
-  <defs><path id="lbl" d="M 220.04 332.49 A 134.0 134.0 0 0 0 306.45 281.39"/></defs>
+  <defs><path id="lblai-students" d="M 220.04 332.49 A 134.0 134.0 0 0 0 306.45 281.39"/></defs>
   <text fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">
-    <textPath href="#lbl" startOffset="50%" text-anchor="middle" dominant-baseline="central">54%</textPath>
+    <textPath href="#lblai-students" startOffset="50%" text-anchor="middle" dominant-baseline="central">54%</textPath>
   </text>
 </g><g transform="translate(1200,0)">
   <text x="200.0" y="422" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">Students — Disciplined fairly</text><text x="200.0" y="445" fill="#6B7280" font-family="Arial, Helvetica, sans-serif" font-size="16" text-anchor="middle">agreed or strongly agreed</text>
   <path d="M 200.00 66.00 A 134.0 134.0 0 1 1 190.65 333.67" fill="none" stroke="#2E7D32" stroke-width="84" stroke-linecap="butt"/><polygon points="186.54,392.53 194.77,274.82 158.59,327.44" fill="#2E7D32"/>
-  <defs><path id="lbl" d="M 211.68 333.49 A 134.0 134.0 0 0 0 301.13 287.91"/></defs>
+  <defs><path id="lbldiscipline-students" d="M 211.68 333.49 A 134.0 134.0 0 0 0 301.13 287.91"/></defs>
   <text fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">
-    <textPath href="#lbl" startOffset="50%" text-anchor="middle" dominant-baseline="central">55%</textPath>
+    <textPath href="#lbldiscipline-students" startOffset="50%" text-anchor="middle" dominant-baseline="central">55%</textPath>
   </text>
 </g><g transform="translate(1600,0)">
   <text x="200.0" y="422" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">Staff — Communication among staff is</text><text x="200.0" y="445" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle">open and honest</text><text x="200.0" y="468" fill="#6B7280" font-family="Arial, Helvetica, sans-serif" font-size="16" text-anchor="middle">agreed or strongly agreed</text>
   <path d="M 200.00 66.00 A 134.0 134.0 0 1 1 149.80 324.24" fill="none" stroke="#2E7D32" stroke-width="84" stroke-linecap="butt"/><polygon points="127.70,378.95 171.90,269.54 121.24,308.41" fill="#2E7D32"/>
-  <defs><path id="lbl" d="M 169.86 330.57 A 134.0 134.0 0 0 0 269.02 314.86"/></defs>
+  <defs><path id="lblstaff-communication" d="M 169.86 330.57 A 134.0 134.0 0 0 0 269.02 314.86"/></defs>
   <text fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">
-    <textPath href="#lbl" startOffset="50%" text-anchor="middle" dominant-baseline="central">60%</textPath>
+    <textPath href="#lblstaff-communication" startOffset="50%" text-anchor="middle" dominant-baseline="central">60%</textPath>
   </text>
 </g></svg>
