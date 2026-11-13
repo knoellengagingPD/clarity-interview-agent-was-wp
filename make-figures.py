@@ -37,6 +37,11 @@ GROUPS = {
     'fig-safe':      ['safe-students', 'safe-teachers', 'safe-staff'],
     'fig-concern':   ['concern-students', 'concern-teachers', 'concern-staff'],
     'fig-resources': ['res-students', 'res-teachers', 'res-staff', 'res-parents'],
+    'fig-respect':   ['respect-students', 'respect-teachers', 'respect-staff', 'respect-parents'],
+    'fig-belong':    ['belong-students', 'belong-teachers', 'belong-staff'],
+    # Peer conduct pairs two questions, each put to students and staff, so the
+    # gap can be read on both without implying they are one measure.
+    'fig-peer':      ['peer-students', 'peer-staff', 'bully-students', 'bully-staff'],
 }
 
 

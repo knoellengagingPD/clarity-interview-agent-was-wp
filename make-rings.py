@@ -179,6 +179,17 @@ STANDARD = [
     ('res-teachers', 86, '86% Agree', 'Teachers — Adequate instructional materials · agreed or strongly agreed'),
     ('res-staff', 90, '90% Agree', 'Staff — Materials and supplies I need · agreed or strongly agreed'),
     ('res-parents', 86, '86% Agree', 'Parents — My child has access to resources · agreed or strongly agreed'),
+    ('respect-students', 81, '81% Agree', 'Students — Teachers and staff treat students with respect · agreed or strongly agreed'),
+    ('respect-teachers', 100, '100% Agree', 'Teachers — Teachers and staff treat students with respect · agreed or strongly agreed'),
+    ('respect-staff', 91, '91% Agree', 'Staff — Teachers and staff treat students with respect · agreed or strongly agreed'),
+    ('respect-parents', 88, '88% Agree', 'Parents — Teachers and staff treat students with respect · agreed or strongly agreed'),
+    ('belong-students', 79, '79% Agree', 'Students — I feel like I belong at this school · agreed or strongly agreed'),
+    ('belong-teachers', 84, '84% Agree', 'Teachers — I feel like I belong at this school · agreed or strongly agreed'),
+    ('belong-staff', 90, '90% Agree', 'Staff — I feel like I belong at this school · agreed or strongly agreed'),
+    ('peer-students', 68, '68% Agree', 'Students — Students treat each other with respect · agreed or strongly agreed'),
+    ('peer-staff', 90, '90% Agree', 'Staff — Students treat each other with respect · agreed or strongly agreed'),
+    ('bully-students', 64, '64% Agree', 'Students — Bullying is rare at this school · agreed or strongly agreed'),
+    ('bully-staff', 90, '90% Agree', 'Staff — Bullying is rare at this school · agreed or strongly agreed'),
 ]
 
 ap = argparse.ArgumentParser()
