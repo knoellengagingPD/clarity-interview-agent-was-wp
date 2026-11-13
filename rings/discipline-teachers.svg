@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400" role="img" aria-label="81% Agree">
+  <rect width="400" height="400" fill="#FFFFFF"/>
+  <path d="M 200.00 66.00 A 134.0 134.0 0 1 1 66.89 184.60" fill="none" stroke="#2E7D32" stroke-width="84" stroke-linecap="butt"/><polygon points="8.28,177.82 125.50,191.38 75.41,150.67" fill="#2E7D32"/>
+  <text x="200" y="334" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif"
+        font-size="30" font-weight="700" text-anchor="middle" dominant-baseline="central">81% Agree</text>
+</svg>
