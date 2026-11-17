@@ -178,9 +178,21 @@ for (const d of docs) {
     sessions.set(d.session_id, {
       id: d.session_id, role, token: d.token || '',
       rows: 0, withText: 0, fabricated: 0, first: null, last: null,
+      instrumentVersion: '',
     });
   }
   const s = sessions.get(d.session_id);
+  /*
+   * Taken from the first row that carries one. It is a property of the
+   * session, so every row should agree; if two rows ever disagree the
+   * instrument changed mid-session, which is worth seeing rather than
+   * silently averaging.
+   */
+  if (d.instrument_version && !s.instrumentVersion) {
+    s.instrumentVersion = String(d.instrument_version);
+  } else if (d.instrument_version && s.instrumentVersion !== String(d.instrument_version)) {
+    s.instrumentVersion = 'MIXED';
+  }
   s.rows += 1;
   if (t.trim()) s.withText += 1;
   if (fab) s.fabricated += 1;
@@ -198,6 +210,10 @@ const all = [...sessions.values()];
 const sessionLines = [row([
   'session_id', 'role', 'answers', 'with_text', 'text_pct',
   'fabricated', 'ratings_only', 'started', 'ended', 'minutes', 'token',
+  // Which instrument this session was given. Blank for anything collected
+  // before 2026-11-16, which is every session to date -- those predate the
+  // field and their comparability has to be established by hand.
+  'instrument_version',
 ])];
 
 for (const s of all.sort((a, b) => a.role.localeCompare(b.role) || (a.first - b.first))) {
@@ -210,7 +226,7 @@ for (const s of all.sort((a, b) => a.role.localeCompare(b.role) || (a.first - b.
     // survey and declined the optional spoken part. The ratings are valid.
     s.withText === 0 && s.rows >= 2 ? 'YES' : '',
     s.first ? s.first.toISOString() : '', s.last ? s.last.toISOString() : '', mins,
-    s.token,
+    s.token, s.instrumentVersion || '',
   ]));
 }
 

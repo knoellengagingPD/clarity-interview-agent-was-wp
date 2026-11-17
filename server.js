@@ -58,6 +58,17 @@ const log = {
 // case is an operator hitting a stale container and needing to click Refresh
 // again after the TTL elapses to see a just-submitted response. TTLs below are
 // kept short specifically to bound that window.
+/*
+ * A test session, told from the token alone.
+ *
+ * Every hide-test filter below also consults climate_tokens for is_test.
+ * This is the belt to that braces: it still works when the token's doc was
+ * deleted, when the deployment's school_id was typed differently, and when
+ * nobody remembered the checkbox -- which is every way the flag has
+ * actually failed.
+ */
+const isTestToken = (t) => typeof t === 'string' && t.startsWith('SCLTEST-');
+
 const _responseCache = new Map();
 function cacheGet(key) {
   const entry = _responseCache.get(key);
@@ -1074,6 +1085,17 @@ app.post(
         doc.question_type = req.body.question_type;
       }
       if (req.body.item_version) doc.item_version = String(req.body.item_version).slice(0, 16);
+      /*
+       * instrument_version answers the question item_version cannot: are two
+       * DEPLOYMENTS comparable? item_version settles one row at a time, so
+       * comparing two cycles means diffing every item and reasoning about the
+       * result. This makes it one equality check. Sessions carrying different
+       * values were given different instruments, and any trend drawn between
+       * them is a comparison of instruments as much as of schools.
+       */
+      if (req.body.instrument_version) {
+        doc.instrument_version = String(req.body.instrument_version).slice(0, 16);
+      }
       if (req.body.question_text) doc.question_text = String(req.body.question_text).slice(0, 500);
       if (['click', 'voice', 'text'].includes(req.body.input_method)) {
         doc.input_method = req.body.input_method;
@@ -4746,13 +4768,24 @@ app.post('/school-climate/tokens', requireAdminJWT, async (req, res) => {
       return res.status(400).json({ error: `role must be one of: ${validRoles.join(', ')}` });
     }
 
-    // Generate a unique SCL-XXXXXX token (omit easily-confused chars)
+    /*
+     * Generate a unique token (omit easily-confused chars).
+     *
+     * A test token says so in its own name. The is_test flag alone was not
+     * enough: it defaults to false, nothing shows it to the person holding
+     * the token, and filtering depended on finding the token's doc by
+     * school_id afterwards. A demo run on a live token was therefore
+     * indistinguishable from a real respondent, and in pps-2026-27 that
+     * cost most of a day deciding whether one complete parent session was
+     * genuine or a staged one. With SCLTEST- the answer is in the string.
+     */
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const prefix = is_test === true ? 'SCLTEST-' : 'SCL-';
     let token;
     let attempts = 0;
     do {
       const rand = randomCode(chars, 6); // CIA-1-002: CSPRNG, same alphabet and length
-      token = `SCL-${rand}`;
+      token = `${prefix}${rand}`;
       const existing = await db.collection('climate_tokens').where('token', '==', token).limit(1).get();
       if (existing.empty) break;
       attempts++;
@@ -5081,7 +5114,7 @@ app.get('/school-climate/sessions', requireAdminJWT, async (req, res) => {
 
     // Apply filters
     const filteredDocs = allDocs.filter(doc => {
-      if (shouldHideTest && doc.token && testTokenSet.has(doc.token)) return false;
+      if (shouldHideTest && doc.token && (testTokenSet.has(doc.token) || isTestToken(doc.token))) return false;
       if (!shouldShowArchived && doc.session_id && archivedSessionSet.has(doc.session_id)) return false;
       return true;
     });
@@ -5316,7 +5349,9 @@ app.post('/admin/backfill-survey-cycles', requireAdminJWT, async (req, res) => {
 // The governing rule: no alert without a verified token binding, and once a flag is
 // bound the alert always goes out.
 const CRISIS_SESSION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
-const CRISIS_TOKEN_RE      = /^SCL-[A-Z0-9]{6}$/;
+// Accepts SCL- and SCLTEST-. A crisis alert is never suppressed for being
+// a test session: see the note on the is_test check below.
+const CRISIS_TOKEN_RE      = /^SCL(?:TEST)?-[A-Z0-9]{6}$/;
 
 app.post('/school-climate/flag-session',
   // Raised from 3. A dropped crisis flag is the worst failure this system can
@@ -5646,7 +5681,7 @@ app.get('/workplace/sessions', requireAdminJWT, async (req, res) => {
     const byId = new Map();
     for (const d of snap.docs) {
       const doc = d.data() || {};
-      if (shouldHideTest && doc.token && testTokens.has(doc.token)) continue;
+      if (shouldHideTest && doc.token && (testTokens.has(doc.token) || isTestToken(doc.token))) continue;
       const sid = doc.session_id || 'unknown';
       if (!byId.has(sid)) {
         byId.set(sid, {
@@ -6732,7 +6767,7 @@ app.get('/workplace/stats', requireAdminJWT, async (req, res) => {
 
     snap.docs.forEach(d => {
       const doc = d.data() || {};
-      if (shouldHideTest && doc.token && testTokenSet.has(doc.token)) return;
+      if (shouldHideTest && doc.token && (testTokenSet.has(doc.token) || isTestToken(doc.token))) return;
       if (doc.session_id && archivedSessions.has(doc.session_id)) return;
 
       const createdMs = doc.created_at && doc.created_at.toMillis ? doc.created_at.toMillis() : null;
@@ -6900,7 +6935,7 @@ app.post('/api/generate-quantitative-report', requireAdminJWT, async (req, res) 
         const data = d.data();
         if (data.school_id !== schoolId) return;
         if (data.is_test === true) return;
-        if (data.token && testTokenSet.has(data.token)) return;
+        if (data.token && (testTokenSet.has(data.token) || isTestToken(data.token))) return;
         if (data.domain === 'dream_big' || data.domain === 'open') return; // exclude open-ended
         if (data.rating === undefined || data.rating === null) return;
         if (data.rating === 0) return;                                       // exclude zero-rated turn records
