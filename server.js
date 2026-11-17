@@ -6990,14 +6990,31 @@ app.post('/api/generate-quantitative-report', requireAdminJWT, async (req, res) 
     // ── 5. Descriptive stats ─────────────────────────────────────────────────
     function computeStats(ratings) {
       const n = ratings.length;
-      if (n === 0) return { n: 0, mean: 0, min: 0, max: 0, std_dev: 0 };
+      if (n === 0) return { n: 0, fav: 0, mean: 0, min: 0, max: 0, std_dev: 0 };
       const sum = ratings.reduce((a, b) => a + b, 0);
       const mean = Math.round((sum / n) * 100) / 100;
       const min  = Math.min(...ratings);
       const max  = Math.max(...ratings);
       const variance = ratings.reduce((acc, r) => acc + Math.pow(r - mean, 2), 0) / n;
       const std_dev  = Math.round(Math.sqrt(variance) * 100) / 100;
-      return { n, mean, min, max, std_dev };
+      /*
+       * Percent favorable: the share answering Agree or Strongly Agree.
+       *
+       * Without it this document and the narrative report were describing the
+       * same survey in two currencies. The narrative leads with "80% agreed"
+       * on every figure it cites, because on a forced-choice 1-4 scale with
+       * no neutral the boundary between Disagree and Agree is the one that
+       * needs no scoring key to read. This file gave only means, so a reader
+       * holding both had percentages in one and 1-4 averages in the other
+       * with nothing joining them.
+       *
+       * Computed the same way as favorability.ts in the frontend -- share at
+       * or above 3, rounded -- so the two agree by construction. Ratings of
+       * zero are the open-ended half of a question pair and were dropped
+       * upstream, before these buckets were filled.
+       */
+      const fav = Math.round((ratings.filter(r => r >= 3).length / n) * 100);
+      return { n, fav, mean, min, max, std_dev };
     }
 
     // ── 6. Question text + domain lookup ─────────────────────────────────────
@@ -7197,8 +7214,14 @@ app.post('/api/generate-quantitative-report', requireAdminJWT, async (req, res) 
     const roleLabel = role === 'all' ? 'All' : role.charAt(0).toUpperCase() + role.slice(1);
 
     // Column widths (pts): # | Question Text | n | Mean | Min | Max | Std Dev
-    const COL_WIDTHS  = [25, 280, 35, 50, 35, 35, 50];
-    const COL_HEADERS = ['#', 'Question Text', 'n', 'Mean', 'Min', 'Max', 'Std Dev'];
+    /*
+     * % Agree sits before Mean deliberately: the proportion is the figure a
+     * reader can act on without a key, the mean is the supporting detail.
+     * Question Text gives up 30 units to make room; the row total stays
+     * inside the 532-unit printable width.
+     */
+    const COL_WIDTHS  = [25, 250, 35, 45, 50, 35, 35, 50];
+    const COL_HEADERS = ['#', 'Question Text', 'n', '% Agree', 'Mean', 'Min', 'Max', 'Std Dev'];
     const ROW_H = 28;
 
     const pdfDoc = new PDFDocument({ margin: 40, size: 'LETTER', bufferPages: true });
@@ -7253,7 +7276,8 @@ app.post('/api/generate-quantitative-report', requireAdminJWT, async (req, res) 
           { text: String(row.qNum),    color: '#374151', bold: false },
           { text: row.text,            color: '#374151', bold: false },
           { text: String(row.n),       color: '#374151', bold: false },
-          { text: String(row.mean),    color: meanColor,  bold: true  },
+          { text: `${row.fav}%`,       color: '#111827', bold: true  },
+          { text: String(row.mean),    color: meanColor,  bold: false },
           { text: String(row.min),     color: '#374151', bold: false },
           { text: String(row.max),     color: '#374151', bold: false },
           { text: String(row.std_dev), color: '#374151', bold: false },
