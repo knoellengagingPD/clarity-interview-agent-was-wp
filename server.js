@@ -7274,7 +7274,23 @@ app.post('/api/generate-quantitative-report', requireAdminJWT, async (req, res) 
       cell.pooled.push(...b.ratings);
       cell.qMeans.push(Math.round((b.ratings.reduce((a, x) => a + x, 0) / b.ratings.length) * 100) / 100);
     }
-    const summaryRoles = Object.keys(summary).sort();
+    /*
+     * Students, teachers, staff, parents -- the order the narrative report
+     * pins its At-a-Glance to, not alphabetical.
+     *
+     * Same numbers either way, but a reader holding both documents sees two
+     * tables whose rows do not line up, and the narrative's order is fixed
+     * deliberately so next cycle's table can be laid beside this one row for
+     * row. Anything outside the four climate roles sorts after them, so a
+     * workplace report still renders.
+     */
+    const ROLE_ORDER = ['students', 'teachers', 'staff', 'parents'];
+    const roleRank = (r) => {
+      const i = ROLE_ORDER.indexOf(r);
+      return i === -1 ? ROLE_ORDER.length : i;
+    };
+    const summaryRoles = Object.keys(summary)
+      .sort((a, b) => roleRank(a) - roleRank(b) || a.localeCompare(b));
     const summaryDomains = domainOrder.filter(d => summaryRoles.some(r => summary[r][d]));
 
     // ── 8. Build PDF ──────────────────────────────────────────────────────────
