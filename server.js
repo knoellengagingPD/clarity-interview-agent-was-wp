@@ -7203,6 +7203,80 @@ app.post('/api/generate-quantitative-report', requireAdminJWT, async (req, res) 
       grouped[bucket].push({ qNum: qNum++, qid, text, ...stats });
     }
 
+    /*
+     * ── 7b. Domain summary ───────────────────────────────────────────────────
+     *
+     * Sixty-nine item rows with nothing to orient on. The narrative report
+     * opens with a five-domain table and this document had no equivalent, so
+     * a reader met the detail before the shape.
+     *
+     * The arithmetic deliberately mirrors the dashboard rather than choosing
+     * its own, because two documents disagreeing by 0.01 is worse than either
+     * convention being ideal:
+     *
+     *   mean -- the average of the per-question means, each already rounded
+     *           to two places. This is what computeDomainAvgs does in the
+     *           frontend, and it is why students/environment reads 2.91 and
+     *           not the 2.90 that pooling the raw ratings gives.
+     *   %    -- the pooled share of ratings at or above 3, which is what
+     *           domainFavorability does.
+     *
+     * Those two are computed on different bases, which is a real wrinkle
+     * rather than a tidy one. It is recorded in reportFlags as an
+     * 'inconsistency' with a tolerance, and reproduced here on purpose so
+     * the two documents agree with each other.
+     */
+    /*
+     * One domain label, used by both the summary and the section headings.
+     * The old inline version title-cased blindly and rendered 'ai_readiness'
+     * as "Ai Readiness", which reads as a typo in a document going to a
+     * superintendent.
+     */
+    const prettyDomain = (d) => String(d)
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, c => c.toUpperCase())
+      .replace(/\bAi\b/g, 'AI');
+
+    const roleRespondents = {};
+    /*
+     * Which instrument produced these numbers.
+     *
+     * Recorded per response since 2026-11-16 and backfilled for everything
+     * before it. A quantitative deliverable is exactly where it belongs: it
+     * is what makes a comparison with the next cycle checkable rather than
+     * assumed, and it is the one fact a reader cannot recover from the table.
+     *
+     * Reported per role, because the four roles answer different instruments
+     * by design. More than one value for a single role would mean the
+     * questions changed mid-cycle, which is worth seeing on the cover rather
+     * than discovering later.
+     */
+    const roleInstrument = {};
+    for (const doc of allDocs) {
+      const r = normalizeRole(doc.role);
+      if (!r) continue;
+      (roleRespondents[r] ||= new Set()).add(doc.session_id || doc.id);
+      if (doc.instrument_version) {
+        (roleInstrument[r] ||= new Set()).add(String(doc.instrument_version));
+      }
+    }
+    const instrumentLine = Object.keys(roleInstrument).sort().map((r) => {
+      const vs = [...roleInstrument[r]];
+      return `${r}: ${vs.length > 1 ? `MIXED (${vs.join(', ')})` : vs[0]}`;
+    }).join('   |   ');
+
+    const summary = {};   // role -> domain -> { fav, mean }
+    for (const key of Object.keys(questionBuckets)) {
+      const b = questionBuckets[key];
+      const d = domainOrder.includes(b.domain) ? b.domain : null;
+      if (!d || !b.ratings.length) continue;
+      const cell = ((summary[b.role] ||= {})[d] ||= { pooled: [], qMeans: [] });
+      cell.pooled.push(...b.ratings);
+      cell.qMeans.push(Math.round((b.ratings.reduce((a, x) => a + x, 0) / b.ratings.length) * 100) / 100);
+    }
+    const summaryRoles = Object.keys(summary).sort();
+    const summaryDomains = domainOrder.filter(d => summaryRoles.some(r => summary[r][d]));
+
     // ── 8. Build PDF ──────────────────────────────────────────────────────────
     const NAVY       = '#1E3A5F';
     const LIGHT_GRAY = '#F8FAFC';
@@ -7248,6 +7322,12 @@ app.post('/api/generate-quantitative-report', requireAdminJWT, async (req, res) 
       pdfDoc.moveDown(0.2);
       pdfDoc.font('Helvetica').fontSize(8).fillColor('#374151')
         .text('Ratings are on a 1–4 scale.  1=Strongly Disagree,  2=Disagree,  3=Agree,  4=Strongly Agree', { align: 'center' });
+      pdfDoc.moveDown(0.2);
+      if (instrumentLine) {
+        pdfDoc.moveDown(0.2);
+        pdfDoc.font('Helvetica').fontSize(7.5).fillColor('#6B7280')
+          .text(`Instrument version — ${instrumentLine}`, { align: 'center' });
+      }
       pdfDoc.moveDown(0.2);
       pdfDoc.font('Helvetica-Bold').fontSize(8).fillColor('#991B1B')
         .text('Confidential — For District Use Only', { align: 'center' });
@@ -7308,12 +7388,55 @@ app.post('/api/generate-quantitative-report', requireAdminJWT, async (req, res) 
       }
 
       // Render each domain
+      // The summary table, ahead of the detail.
+      if (summaryRoles.length && summaryDomains.length) {
+        const LABEL_W = 112;
+        const CELL_W = Math.floor((pageW - LABEL_W) / summaryDomains.length);
+        pdfDoc.font('Helvetica-Bold').fontSize(11).fillColor(NAVY)
+          .text('At a Glance', marginL, pdfDoc.y);
+        pdfDoc.moveDown(0.3);
+        let sy = pdfDoc.y;
+        pdfDoc.rect(marginL, sy, LABEL_W + CELL_W * summaryDomains.length, 18).fill(NAVY);
+        let sx = marginL;
+        ['Role', ...summaryDomains.map(prettyDomain)].forEach((h, i) => {
+          const w = i === 0 ? LABEL_W : CELL_W;
+          pdfDoc.fillColor('white').font('Helvetica-Bold').fontSize(8)
+            .text(h, sx + 2, sy + 5, { width: w - 4, align: i === 0 ? 'left' : 'center', lineBreak: false });
+          sx += w;
+        });
+        sy += 18;
+        summaryRoles.forEach((r, idx) => {
+          pdfDoc.rect(marginL, sy, LABEL_W + CELL_W * summaryDomains.length, 20)
+            .fill(idx % 2 === 0 ? 'white' : LIGHT_GRAY);
+          const n = roleRespondents[r] ? roleRespondents[r].size : 0;
+          let x = marginL;
+          pdfDoc.fillColor('#374151').font('Helvetica').fontSize(8)
+            .text(`${r.charAt(0).toUpperCase()}${r.slice(1)} (n=${n})`, x + 2, sy + 6,
+              { width: LABEL_W - 4, align: 'left', lineBreak: false });
+          x += LABEL_W;
+          for (const d of summaryDomains) {
+            const c = summary[r][d];
+            let label = '—';
+            if (c) {
+              const fav = Math.round((c.pooled.filter(v => v >= 3).length / c.pooled.length) * 100);
+              const mean = Math.round((c.qMeans.reduce((a, v) => a + v, 0) / c.qMeans.length) * 100) / 100;
+              label = `${fav}% (${mean.toFixed(2)})`;
+            }
+            pdfDoc.fillColor('#111827').font('Helvetica-Bold').fontSize(8)
+              .text(label, x + 2, sy + 6, { width: CELL_W - 4, align: 'center', lineBreak: false });
+            x += CELL_W;
+          }
+          sy += 20;
+        });
+        pdfDoc.y = sy + 14;
+      }
+
       for (const domain of domainOrder) {
         const rows = grouped[domain];
         if (!rows || rows.length === 0) continue;
         if (pdfDoc.y + 50 > pageH - marginB - 40) { pdfDoc.addPage(); pdfDoc.y = marginT; }
         pdfDoc.moveDown(0.4);
-        const domainLabel = domain.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        const domainLabel = prettyDomain(domain);
         pdfDoc.font('Helvetica-Bold').fontSize(12).fillColor(NAVY).text(domainLabel);
         pdfDoc.moveDown(0.3);
         let tableY = pdfDoc.y;
