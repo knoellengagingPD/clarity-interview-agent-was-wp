@@ -7267,17 +7267,30 @@ app.post('/api/generate-quantitative-report', requireAdminJWT, async (req, res) 
 
       function drawDataRow(row, y, isEven) {
         pdfDoc.rect(marginL, y, pageW, ROW_H).fill(isEven ? 'white' : LIGHT_GRAY);
-        let meanColor = '#111827';
-        if      (row.mean >= 3.5) meanColor = '#166534';
-        else if (row.mean >= 3.0) meanColor = '#111827';
-        else if (row.mean >= 2.5) meanColor = '#92400E';
-        else                      meanColor = '#991B1B';
+        /*
+         * No verdict colouring.
+         *
+         * The mean used to be painted green above 3.5, amber above 2.5 and
+         * red below -- the same cut points the rest of this product spent
+         * considerable effort demoting. The narrative report now states in
+         * its own limits that no score here is high or low relative to other
+         * schools, and that what counts as acceptable is the district's
+         * judgement rather than a finding of the survey. A red cell is a
+         * finding of the survey. The two documents cannot both be right.
+         *
+         * The cut points were never derived from a norm group either: this
+         * instrument has no comparison data, so a threshold painted on a
+         * number is borrowed from somebody else's distribution.
+         *
+         * The figures carry themselves. % Agree is bold because it is the
+         * one a reader can act on unaided; everything else is plain.
+         */
         const cells = [
           { text: String(row.qNum),    color: '#374151', bold: false },
           { text: row.text,            color: '#374151', bold: false },
           { text: String(row.n),       color: '#374151', bold: false },
           { text: `${row.fav}%`,       color: '#111827', bold: true  },
-          { text: String(row.mean),    color: meanColor,  bold: false },
+          { text: String(row.mean),    color: '#374151', bold: false },
           { text: String(row.min),     color: '#374151', bold: false },
           { text: String(row.max),     color: '#374151', bold: false },
           { text: String(row.std_dev), color: '#374151', bold: false },
