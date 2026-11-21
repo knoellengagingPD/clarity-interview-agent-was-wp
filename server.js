@@ -5182,6 +5182,7 @@ app.get('/school-climate/sessions', requireAdminJWT, async (req, res) => {
           domain_counts: {},
           total_rated_responses: 0,
           open_responses: [],
+          ai_open_responses: [],
         };
       }
       const rd = byRole[docRole];
@@ -5202,6 +5203,7 @@ app.get('/school-climate/sessions', requireAdminJWT, async (req, res) => {
           // role and can't be attributed back to an individual session.
           followups: {},
           dream_big: {},
+          ai_open: {},
           survey_cycle: cycleForDoc(doc),
           response_mode: null,
         };
@@ -5249,6 +5251,32 @@ app.get('/school-climate/sessions', requireAdminJWT, async (req, res) => {
       }
     }
 
+    // Collect the open AI Readiness answers (SC_STU_21, SC_TCH_21, SC_STF_20,
+    // SC_PAR_19 on the current instrument). They are the open half of an AI
+    // question pair, stored with domain 'ai_readiness' and a rating-0
+    // placeholder, so they fell through both branches above: the rating
+    // branch skips rating 0, and the Dream Big branch matches on domain.
+    // 118 of them on pps-2026-27 reached no report. Kept in their own list,
+    // not open_responses: theme counts are drawn from the two Dream Big
+    // prompts only, and an answer to a question about AI is not a theme a
+    // respondent raised unasked.
+    for (const doc of cycleFilteredDocs) {
+      if (doc.domain !== 'ai_readiness') continue;
+      const qid = doc.question_id ? String(doc.question_id) : '';
+      if (!qid || /^turn_\d+$/.test(qid)) continue;
+      const r = Number(doc.rating);
+      if (doc.rating !== undefined && doc.rating !== null && !isNaN(r) && r !== 0) continue;
+      // Same field order as export-school.mjs's textOf.
+      const text = String(doc.followup_text ?? doc.text ?? '').trim();
+      if (!text || text === '[skipped]') continue;
+      const docRole = (doc.section || '').replace('school_climate_', '') || 'unknown';
+      const rd = byRole[docRole];
+      if (!rd) continue;
+      rd.ai_open_responses.push(text);
+      const sid = doc.session_id || 'unknown';
+      if (rd.sessions[sid]) rd.sessions[sid].ai_open[qid] = text;
+    }
+
     // Log open-ended response counts for debugging
     const openDebug = Object.entries(byRole)
       .map(([r, rd]) => `${r}: ${rd.open_responses.length}`)
@@ -5272,6 +5300,7 @@ app.get('/school-climate/sessions', requireAdminJWT, async (req, res) => {
         question_averages,
         domain_averages,
         open_responses: rd.open_responses,
+        ai_open_responses: rd.ai_open_responses,
         sessions: Object.values(rd.sessions).sort((a, b) => (b.ts || '').localeCompare(a.ts || '')),
       };
     }
