@@ -21,6 +21,11 @@ import { writeSessionToSupabase, writeWorkplaceSessionToSupabase } from './lib/w
 import { scrubPII } from './lib/scrubPII.js';
 import { evaluateClimateWrite, isClimateSection } from './lib/climateTokenGuard.js';
 import { announceDebugState, isDebugOn, writeDebugTrace } from './lib/debugTrace.js';
+import {
+  TAXONOMY_VERSION, SPINE_V1, directionOf, corpusOf, textOf, looksFabricated, labelId,
+  volunteeredPrompt, pointsPrompt, parseModelJson, validateVolunteered, validatePoints,
+  tally as tallyThemes, isReviewed,
+} from './lib/themes.js';
 
 // Stated once, at import, so the Vercel log says which state the switch is in
 // rather than leaving "off" and "misconfigured" looking the same.
@@ -5527,6 +5532,367 @@ app.get('/school-climate/school-ids', requireAdminJWT, async (req, res) => {
   } catch (e) {
     log.error('Failed to fetch school IDs from climate_tokens', { error: e.message });
     return res.status(500).json({ error: 'Failed to fetch school IDs' });
+  }
+});
+
+// ─── School Climate: theme layer ─────────────────────────────────────────────
+// Label every open answer, have a person review the labels, count them in
+// code. See lib/themes.js for why, and for every rule the counting follows.
+//
+//   GET   /school-climate/themes/plan       what there is to label, and progress
+//   POST  /school-climate/themes/label      label one question's answers
+//   GET   /school-climate/themes/labels     one question's labels, for review
+//   PATCH /school-climate/themes/labels/:id accept or correct one label
+//   POST  /school-climate/themes/accept     accept every unreviewed label in a question
+//   GET   /school-climate/themes/tally      the counts; refused until all reviewed
+//
+// Collections: theme_labels (one per response, raw text stored with it) and
+// theme_extensions (one per school and taxonomy version).
+
+/**
+ * The school's climate responses, filtered exactly as GET
+ * /school-climate/sessions filters them, so labels cover the same answers the
+ * report is built from. Duplicated rather than shared because that route is
+ * the one every report depends on and is not being touched here.
+ */
+async function loadClimateResponses(school_id, { hideTest, showArchived, startDate, endDate }) {
+  const sections = ['students', 'teachers', 'staff', 'parents'].map(r => `school_climate_${r}`);
+  // Same date window as the sessions route: end_date is inclusive of its day.
+  const startIso = startDate ? new Date(startDate).toISOString() : null;
+  const endIso = endDate ? (() => { const d = new Date(endDate); d.setDate(d.getDate() + 1); return d.toISOString(); })() : null;
+  const docs = [];
+  await Promise.all(sections.map(async (section) => {
+    const snap = await db.collection('responses').where('section', '==', section).get();
+    snap.docs.forEach(d => {
+      const data = d.data();
+      if (data.school_id !== school_id) return;
+      if (startIso && data.ts && data.ts < startIso) return;
+      if (endIso && data.ts && data.ts > endIso) return;
+      docs.push({ id: d.id, role: section.replace('school_climate_', ''), ...data });
+    });
+  }));
+  let testTokens = new Set();
+  if (hideTest) {
+    const s = await db.collection('climate_tokens').where('school_id', '==', school_id).get();
+    s.docs.forEach(d => { if (d.data().is_test === true) testTokens.add(d.data().token); });
+  }
+  let archived = new Set();
+  if (!showArchived) {
+    const s = await db.collection('climate_session_flags').where('school_id', '==', school_id).get();
+    s.docs.forEach(d => { if (d.data().status === 'archived') archived.add(d.data().session_id); });
+  }
+  return docs.filter(doc => {
+    if (hideTest && doc.token && (testTokens.has(doc.token) || isTestToken(doc.token))) return false;
+    if (!showArchived && doc.session_id && archived.has(doc.session_id)) return false;
+    return true;
+  });
+}
+
+const themeFilters = (src) => ({
+  hideTest: String(src.hide_test) === 'true',
+  showArchived: String(src.show_archived) === 'true',
+  startDate: src.start_date || null,
+  endDate: src.end_date || null,
+});
+
+async function loadThemeLabels(school_id) {
+  const snap = await db.collection('theme_labels').where('school_id', '==', school_id).get();
+  return snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(l => l.taxonomy_version === TAXONOMY_VERSION);
+}
+
+const extensionsRef = (school_id) => db.collection('theme_extensions').doc(`${school_id}__${TAXONOMY_VERSION}`);
+async function loadThemeExtensions(school_id) {
+  const snap = await extensionsRef(school_id).get();
+  return snap.exists ? (snap.data().themes || []) : [];
+}
+
+/** One call to the model; the reply's text, or throws with the API's reason. */
+async function themeModelCall(prompt) {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 8192,
+      temperature: 0,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+  const data = await response.json();
+  if (!response.ok || data.type === 'error') {
+    throw new Error(data?.error?.message || `Anthropic API HTTP ${response.status}`);
+  }
+  return data.content?.[0]?.text || '';
+}
+
+app.get('/school-climate/themes/plan', requireAdminJWT, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
+  const { school_id } = req.query;
+  if (!school_id) return res.status(400).json({ error: 'school_id query param is required' });
+  try {
+    const [docs, labels, extensions] = await Promise.all([
+      loadClimateResponses(school_id, themeFilters(req.query)),
+      loadThemeLabels(school_id),
+      loadThemeExtensions(school_id),
+    ]);
+    const byResponse = new Map(labels.map(l => [l.response_id, l]));
+    const questions = new Map();
+    for (const doc of docs) {
+      const corpus = corpusOf(doc, doc.role);
+      if (!corpus) continue;
+      const k = `${doc.role}|${doc.question_id}`;
+      const q = questions.get(k) || {
+        role: doc.role, question_id: doc.question_id, question_text: doc.question_text || '',
+        corpus, direction: directionOf(doc.role, doc.question_id), total: 0, labelled: 0, reviewed: 0,
+      };
+      q.total++;
+      const l = byResponse.get(doc.id);
+      if (l) { q.labelled++; if (isReviewed(l)) q.reviewed++; }
+      questions.set(k, q);
+    }
+    const order = { volunteered: 0, ai_open: 1, elaborated: 2 };
+    const list = [...questions.values()].sort((a, b) =>
+      order[a.corpus] - order[b.corpus] || a.role.localeCompare(b.role) || a.question_id.localeCompare(b.question_id));
+    return res.json({ school_id, taxonomy_version: TAXONOMY_VERSION, spine: SPINE_V1, extensions, questions: list });
+  } catch (e) {
+    log.error('Theme plan failed', { school_id, error: e.message });
+    return res.status(500).json({ error: 'Failed to build the labelling plan' });
+  }
+});
+
+app.post('/school-climate/themes/label', requireAdminJWT, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
+  const { school_id, role, question_id } = req.body || {};
+  if (!school_id || !role || !question_id) return res.status(400).json({ error: 'school_id, role and question_id are required' });
+  if (!process.env.ANTHROPIC_API_KEY) return res.status(503).json({ error: 'ANTHROPIC_API_KEY is not set' });
+  try {
+    const [docs, labels, extensions] = await Promise.all([
+      loadClimateResponses(school_id, themeFilters(req.body)),
+      loadThemeLabels(school_id),
+      loadThemeExtensions(school_id),
+    ]);
+    const done = new Set(labels.map(l => l.response_id));
+    const mine = docs.filter(d => d.role === role && d.question_id === question_id && corpusOf(d, role));
+    if (mine.length === 0) return res.status(404).json({ error: 'No answers to label for that question' });
+    const corpus = corpusOf(mine[0], role);
+    const todo = mine.filter(d => !done.has(d.id));
+    const questionText = mine.find(d => d.question_text)?.question_text || question_id;
+    const now = new Date().toISOString();
+
+    const base = (doc) => ({
+      school_id, taxonomy_version: TAXONOMY_VERSION, response_id: doc.id,
+      session_id: doc.session_id || null, role, question_id, question_text: questionText,
+      corpus, direction: directionOf(role, question_id),
+      rating: corpus === 'elaborated' ? Number(doc.rating) : null,
+      raw_text: textOf(doc), labelled_at: now,
+      review: { status: 'unreviewed' },
+    });
+
+    const writes = [];
+    // Fabricated transcriptions are recorded as excluded, without a model call.
+    const fabricated = todo.filter(d => looksFabricated(textOf(d)));
+    for (const d of fabricated) {
+      writes.push([labelId(school_id, d.id), { ...base(d), codable: false, excluded: 'fabricated', themes: [], led: null, theme: null, points: [], model: null }]);
+    }
+    const items = todo.filter(d => !looksFabricated(textOf(d)))
+      .map((d, i) => ({ key: `r${i + 1}`, doc: d, text: textOf(d), rating: Number(d.rating) }));
+
+    let problems = [];
+    let missing = 0;
+    let addedThemes = [];
+    let newPoints = [];
+    if (items.length) {
+      const keys = items.map(it => it.key);
+      const existingPoints = corpus === 'volunteered' ? [] : (() => {
+        const defs = new Map();
+        for (const l of labels) {
+          if (l.role === role && l.question_id === question_id) {
+            for (const [id, label] of Object.entries(l.point_defs || {})) defs.set(id, label);
+          }
+        }
+        return [...defs].map(([id, label]) => ({ id, label }));
+      })();
+      const prompt = corpus === 'volunteered'
+        ? volunteeredPrompt({ questionText, direction: directionOf(role, question_id), extensions, items })
+        : pointsPrompt({ questionText, corpus, extensions, items, existingPoints });
+
+      // One retry, for an unparseable reply only.
+      let parsed = parseModelJson(await themeModelCall(prompt));
+      if (!parsed.ok) parsed = parseModelJson(await themeModelCall(prompt));
+      if (!parsed.ok) return res.status(502).json({ error: `The labeller's reply could not be read: ${parsed.error}` });
+
+      if (corpus === 'volunteered') {
+        const v = validateVolunteered(parsed.value, keys, extensions);
+        problems = v.problems; missing = v.missing.length; addedThemes = v.added;
+        for (const it of items) {
+          const l = v.labels.get(it.key);
+          if (!l) continue; // left unlabelled; the next call picks it up
+          writes.push([labelId(school_id, it.doc.id), {
+            ...base(it.doc), codable: l.codable, excluded: null, themes: l.themes, led: l.led,
+            theme: null, points: [], model: 'claude-sonnet-4-5', model_label: { ...l },
+          }]);
+        }
+      } else {
+        const v = validatePoints(parsed.value, keys, extensions, existingPoints);
+        problems = v.problems; missing = v.missing.length; newPoints = v.points;
+        const point_defs = Object.fromEntries([...existingPoints, ...v.points].map(p => [p.id, p.label]));
+        for (const it of items) {
+          const l = v.labels.get(it.key);
+          if (!l) continue;
+          writes.push([labelId(school_id, it.doc.id), {
+            ...base(it.doc), codable: l.codable, excluded: null, themes: l.theme ? [l.theme] : [], led: null,
+            theme: l.theme, points: l.points, point_defs, model: 'claude-sonnet-4-5', model_label: { ...l },
+          }]);
+        }
+        // Point labels can change as passes add points; keep every label in the
+        // question carrying the full set so the tally can name them.
+        for (const l of labels) {
+          if (l.role === role && l.question_id === question_id) {
+            writes.push([l.id, { point_defs }, true]);
+          }
+        }
+      }
+    }
+
+    for (let i = 0; i < writes.length; i += 450) {
+      const batch = db.batch();
+      for (const [id, data, merge] of writes.slice(i, i + 450)) {
+        batch.set(db.collection('theme_labels').doc(id), data, merge ? { merge: true } : {});
+      }
+      await batch.commit();
+    }
+    if (addedThemes.length) {
+      await extensionsRef(school_id).set({
+        school_id, taxonomy_version: TAXONOMY_VERSION,
+        themes: [...extensions, ...addedThemes], updated_at: now,
+      }, { merge: true });
+    }
+    const written = writes.filter(w => !w[2]).length;
+    log.info('Theme labels written', { school_id, role, question_id, corpus, written, fabricated: fabricated.length, missing });
+    return res.json({
+      role, question_id, corpus,
+      labelled: written - fabricated.length, excluded_fabricated: fabricated.length,
+      still_unlabelled: missing, added_themes: addedThemes, new_points: newPoints, problems,
+    });
+  } catch (e) {
+    log.error('Theme labelling failed', { school_id, role, question_id, error: e.message });
+    return res.status(500).json({ error: `Labelling failed: ${e.message}` });
+  }
+});
+
+app.get('/school-climate/themes/labels', requireAdminJWT, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
+  const { school_id, role, question_id } = req.query;
+  if (!school_id) return res.status(400).json({ error: 'school_id query param is required' });
+  try {
+    const labels = (await loadThemeLabels(school_id))
+      .filter(l => (!role || l.role === role) && (!question_id || l.question_id === question_id))
+      .sort((a, b) => a.role.localeCompare(b.role) || a.question_id.localeCompare(b.question_id) || a.response_id.localeCompare(b.response_id));
+    return res.json({ labels, extensions: await loadThemeExtensions(school_id) });
+  } catch (e) {
+    log.error('Theme labels fetch failed', { school_id, error: e.message });
+    return res.status(500).json({ error: 'Failed to fetch labels' });
+  }
+});
+
+app.patch('/school-climate/themes/labels/:id', requireAdminJWT, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
+  try {
+    const ref = db.collection('theme_labels').doc(req.params.id);
+    const snap = await ref.get();
+    if (!snap.exists) return res.status(404).json({ error: 'Label not found' });
+    const l = snap.data();
+    const known = new Set([...SPINE_V1.map(t => t.id), ...(await loadThemeExtensions(l.school_id)).map(t => t.id)]);
+    const body = req.body || {};
+    const update = {};
+    if (body.codable !== undefined) update.codable = Boolean(body.codable);
+    if (body.themes !== undefined) {
+      if (!Array.isArray(body.themes) || body.themes.some(t => !known.has(t))) return res.status(400).json({ error: 'themes must be known theme ids' });
+      update.themes = [...new Set(body.themes)];
+    }
+    if (body.led !== undefined) {
+      const themes = update.themes ?? l.themes ?? [];
+      if (body.led !== null && !themes.includes(body.led)) return res.status(400).json({ error: 'led must be one of the label\'s themes' });
+      update.led = body.led;
+    }
+    if (body.theme !== undefined) {
+      if (body.theme !== null && !known.has(body.theme)) return res.status(400).json({ error: 'theme must be a known theme id' });
+      update.theme = body.theme;
+      update.themes = body.theme ? [body.theme] : [];
+    }
+    if (body.points !== undefined) {
+      const defs = l.point_defs || {};
+      if (!Array.isArray(body.points) || body.points.some(p => !(p in defs))) return res.status(400).json({ error: 'points must be ids defined for this question' });
+      update.points = [...new Set(body.points)];
+    }
+    if (update.codable === false) Object.assign(update, { themes: [], led: null, theme: null, points: [] });
+    const changed = Object.keys(update).some(k => JSON.stringify(update[k]) !== JSON.stringify(l[k]));
+    update.review = {
+      status: changed || (l.review && l.review.status === 'edited') ? 'edited' : 'accepted',
+      reviewed_at: new Date().toISOString(),
+    };
+    await ref.set(update, { merge: true });
+    return res.json({ id: req.params.id, ...l, ...update });
+  } catch (e) {
+    log.error('Theme label update failed', { id: req.params.id, error: e.message });
+    return res.status(500).json({ error: 'Failed to update label' });
+  }
+});
+
+app.post('/school-climate/themes/accept', requireAdminJWT, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
+  const { school_id, role, question_id } = req.body || {};
+  if (!school_id || !role || !question_id) return res.status(400).json({ error: 'school_id, role and question_id are required' });
+  try {
+    const todo = (await loadThemeLabels(school_id))
+      .filter(l => l.role === role && l.question_id === question_id && !isReviewed(l));
+    const reviewed_at = new Date().toISOString();
+    for (let i = 0; i < todo.length; i += 450) {
+      const batch = db.batch();
+      for (const l of todo.slice(i, i + 450)) {
+        batch.set(db.collection('theme_labels').doc(l.id), { review: { status: 'accepted', reviewed_at } }, { merge: true });
+      }
+      await batch.commit();
+    }
+    return res.json({ accepted: todo.length });
+  } catch (e) {
+    log.error('Theme bulk accept failed', { school_id, role, question_id, error: e.message });
+    return res.status(500).json({ error: 'Failed to accept labels' });
+  }
+});
+
+app.get('/school-climate/themes/tally', requireAdminJWT, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
+  const { school_id } = req.query;
+  if (!school_id) return res.status(400).json({ error: 'school_id query param is required' });
+  try {
+    const [docs, labels, extensions] = await Promise.all([
+      loadClimateResponses(school_id, themeFilters(req.query)),
+      loadThemeLabels(school_id),
+      loadThemeExtensions(school_id),
+    ]);
+    // Only labels for answers in the current filtered set: an archived
+    // session's labels must not reach a count.
+    const inScope = new Set(docs.filter(d => corpusOf(d, d.role)).map(d => d.id));
+    const scoped = labels.filter(l => inScope.has(l.response_id));
+    const labelled = new Set(scoped.map(l => l.response_id));
+    const unlabelled = [...inScope].filter(id => !labelled.has(id)).length;
+    const result = tallyThemes(scoped, extensions);
+    result.progress.unlabelled = unlabelled;
+    // The review gate (decided 2026-11-23): no count leaves this route for a
+    // report until every answer is labelled and every label has been reviewed.
+    // The review screen asks with preview=true to show counts as it goes.
+    if (String(req.query.preview) !== 'true' && (unlabelled > 0 || result.progress.unreviewed > 0)) {
+      return res.status(409).json({ error: 'Theme labels are not all reviewed yet', progress: result.progress });
+    }
+    return res.json({ school_id, ...result, extensions });
+  } catch (e) {
+    log.error('Theme tally failed', { school_id, error: e.message });
+    return res.status(500).json({ error: 'Failed to compute theme tally' });
   }
 });
 
