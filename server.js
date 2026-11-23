@@ -24,7 +24,7 @@ import { announceDebugState, isDebugOn, writeDebugTrace } from './lib/debugTrace
 import {
   TAXONOMY_VERSION, SPINE_V1, directionOf, corpusOf, textOf, looksFabricated, labelId,
   volunteeredPrompt, pointsPrompt, parseModelJson, validateVolunteered, validatePoints,
-  tally as tallyThemes, isReviewed,
+  tally as tallyThemes, isReviewed, mergeExtensions, withOrphans, applyThemeMerge,
 } from './lib/themes.js';
 
 // Stated once, at import, so the Vercel log says which state the switch is in
@@ -5657,7 +5657,7 @@ app.get('/school-climate/themes/plan', requireAdminJWT, async (req, res) => {
     const order = { volunteered: 0, ai_open: 1, elaborated: 2 };
     const list = [...questions.values()].sort((a, b) =>
       order[a.corpus] - order[b.corpus] || a.role.localeCompare(b.role) || a.question_id.localeCompare(b.question_id));
-    return res.json({ school_id, taxonomy_version: TAXONOMY_VERSION, spine: SPINE_V1, extensions, questions: list });
+    return res.json({ school_id, taxonomy_version: TAXONOMY_VERSION, spine: SPINE_V1, extensions: withOrphans(extensions, labels), questions: list });
   } catch (e) {
     log.error('Theme plan failed', { school_id, error: e.message });
     return res.status(500).json({ error: 'Failed to build the labelling plan' });
@@ -5766,10 +5766,17 @@ app.post('/school-climate/themes/label', requireAdminJWT, async (req, res) => {
       await batch.commit();
     }
     if (addedThemes.length) {
-      await extensionsRef(school_id).set({
-        school_id, taxonomy_version: TAXONOMY_VERSION,
-        themes: [...extensions, ...addedThemes], updated_at: now,
-      }, { merge: true });
+      // Read-modify-write inside a transaction: two questions labelled at
+      // once each wrote "what I read plus mine", and the later write erased
+      // the earlier theme (2026-11-23, "x_phones").
+      await db.runTransaction(async (txn) => {
+        const snap = await txn.get(extensionsRef(school_id));
+        const current = snap.exists ? (snap.data().themes || []) : [];
+        txn.set(extensionsRef(school_id), {
+          school_id, taxonomy_version: TAXONOMY_VERSION,
+          themes: mergeExtensions(current, addedThemes), updated_at: now,
+        }, { merge: true });
+      });
     }
     const written = writes.filter(w => !w[2]).length;
     log.info('Theme labels written', { school_id, role, question_id, corpus, written, fabricated: fabricated.length, missing });
@@ -5792,7 +5799,8 @@ app.get('/school-climate/themes/labels', requireAdminJWT, async (req, res) => {
     const labels = (await loadThemeLabels(school_id))
       .filter(l => (!role || l.role === role) && (!question_id || l.question_id === question_id))
       .sort((a, b) => a.role.localeCompare(b.role) || a.question_id.localeCompare(b.question_id) || a.response_id.localeCompare(b.response_id));
-    return res.json({ labels, extensions: await loadThemeExtensions(school_id) });
+    const all = await loadThemeLabels(school_id);
+    return res.json({ labels, extensions: withOrphans(await loadThemeExtensions(school_id), all) });
   } catch (e) {
     log.error('Theme labels fetch failed', { school_id, error: e.message });
     return res.status(500).json({ error: 'Failed to fetch labels' });
@@ -5806,7 +5814,7 @@ app.patch('/school-climate/themes/labels/:id', requireAdminJWT, async (req, res)
     const snap = await ref.get();
     if (!snap.exists) return res.status(404).json({ error: 'Label not found' });
     const l = snap.data();
-    const known = new Set([...SPINE_V1.map(t => t.id), ...(await loadThemeExtensions(l.school_id)).map(t => t.id)]);
+    const known = new Set([...SPINE_V1.map(t => t.id), ...withOrphans(await loadThemeExtensions(l.school_id), await loadThemeLabels(l.school_id)).map(t => t.id)]);
     const body = req.body || {};
     const update = {};
     if (body.codable !== undefined) update.codable = Boolean(body.codable);
@@ -5865,6 +5873,44 @@ app.post('/school-climate/themes/accept', requireAdminJWT, async (req, res) => {
   }
 });
 
+// POST /school-climate/themes/merge { school_id, from, to }
+// Fold one district extension into another theme, in every label for the
+// school. For duplicates the labeller created in parallel ("x_community" and
+// "Small school size"), or an extension that turns out to belong in the spine.
+// Only an extension can be merged away: the spine is fixed across districts.
+app.post('/school-climate/themes/merge', requireAdminJWT, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
+  const { school_id, from, to } = req.body || {};
+  if (!school_id || !from || !to || from === to) return res.status(400).json({ error: 'school_id, from and to (different) are required' });
+  try {
+    const labels = await loadThemeLabels(school_id);
+    const extensions = withOrphans(await loadThemeExtensions(school_id), labels);
+    if (!from.startsWith('x_') || !extensions.some(t => t.id === from)) return res.status(400).json({ error: 'from must be a district extension (x_...)' });
+    if (!SPINE_V1.some(t => t.id === to) && !extensions.some(t => t.id === to)) return res.status(400).json({ error: 'to must be a known theme' });
+    const changes = labels.map(l => [l.id, applyThemeMerge(l, from, to)]).filter(([, u]) => u);
+    for (let i = 0; i < changes.length; i += 450) {
+      const batch = db.batch();
+      for (const [id, u] of changes.slice(i, i + 450)) batch.set(db.collection('theme_labels').doc(id), u, { merge: true });
+      await batch.commit();
+    }
+    await db.runTransaction(async (txn) => {
+      const snap = await txn.get(extensionsRef(school_id));
+      const current = snap.exists ? (snap.data().themes || []) : [];
+      txn.set(extensionsRef(school_id), {
+        school_id, taxonomy_version: TAXONOMY_VERSION,
+        themes: current.filter(t => t.id !== from),
+        merges: [...(snap.exists ? (snap.data().merges || []) : []), { from, to, at: new Date().toISOString() }],
+        updated_at: new Date().toISOString(),
+      }, { merge: true });
+    });
+    log.info('Theme merged', { school_id, from, to, labels: changes.length });
+    return res.json({ merged: changes.length, from, to });
+  } catch (e) {
+    log.error('Theme merge failed', { school_id, from, to, error: e.message });
+    return res.status(500).json({ error: 'Failed to merge themes' });
+  }
+});
+
 app.get('/school-climate/themes/tally', requireAdminJWT, async (req, res) => {
   if (!db) return res.status(503).json({ error: 'Clarity 360 Firestore not available' });
   const { school_id } = req.query;
@@ -5881,7 +5927,8 @@ app.get('/school-climate/themes/tally', requireAdminJWT, async (req, res) => {
     const scoped = labels.filter(l => inScope.has(l.response_id));
     const labelled = new Set(scoped.map(l => l.response_id));
     const unlabelled = [...inScope].filter(id => !labelled.has(id)).length;
-    const result = tallyThemes(scoped, extensions);
+    const allExtensions = withOrphans(extensions, labels);
+    const result = tallyThemes(scoped, allExtensions);
     result.progress.unlabelled = unlabelled;
     // The review gate (decided 2026-11-23): no count leaves this route for a
     // report until every answer is labelled and every label has been reviewed.
@@ -5889,7 +5936,7 @@ app.get('/school-climate/themes/tally', requireAdminJWT, async (req, res) => {
     if (String(req.query.preview) !== 'true' && (unlabelled > 0 || result.progress.unreviewed > 0)) {
       return res.status(409).json({ error: 'Theme labels are not all reviewed yet', progress: result.progress });
     }
-    return res.json({ school_id, ...result, extensions });
+    return res.json({ school_id, ...result, extensions: allExtensions });
   } catch (e) {
     log.error('Theme tally failed', { school_id, error: e.message });
     return res.status(500).json({ error: 'Failed to compute theme tally' });
